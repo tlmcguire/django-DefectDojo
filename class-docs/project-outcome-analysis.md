@@ -11,8 +11,8 @@ integrations for dozens of scanning tools.
 
 Every file path, class name, function name, and line number cited below was checked
 directly against this repository (`grep`/`find`, not memory) before being written down,
-and every yes/no/partial verdict was reconsidered against what the outcome actually asks
-for rather than just whether related code exists.
+and every yes/no/partial verdict was reconsidered against what the outcome asks for
+rather than just whether related code exists.
 
 ## Screenshots
 
@@ -81,7 +81,7 @@ Yes - `Finding` and `Engagement` both carry explicit, named lifecycle states rat
 
 ### 12. Demonstrate basic design principles
 
-Yes - the codebase's module boundaries embody Open/Closed, Separation of Concerns, and Single Responsibility in ways I can point to directly. **Open/Closed:** [`dojo/tools/factory.py`](../dojo/tools/factory.py)'s auto-discovery means adding a new scanner never requires editing the factory itself. **Separation of Concerns:** models ([`dojo/finding/models.py`](../dojo/finding/models.py)), serializers ([`dojo/api_v2/serializers.py`](../dojo/api_v2/serializers.py)), and business logic ([`dojo/finding/helper.py`](../dojo/finding/helper.py)) are deliberately kept in separate modules instead of fat models or views. **Single Responsibility:** [`dojo/authorization/`](../dojo/authorization) is split into ten single-purpose files, including `roles_permissions.py`, `authorization.py`, `query_filters.py`, `url_permissions.py`, `api_permissions.py`, `template_filters.py`, `serializer_guards.py`, and `middleware.py`.
+Yes - the codebase's module boundaries embody Open/Closed, Separation of Concerns, and Single Responsibility in ways I can point to directly. **Open/Closed:** [`dojo/tools/factory.py`](../dojo/tools/factory.py)'s auto-discovery means adding a new scanner never requires editing the factory itself. **Separation of Concerns:** models ([`dojo/finding/models.py`](../dojo/finding/models.py)), serializers ([`dojo/api_v2/serializers.py`](../dojo/api_v2/serializers.py)), and business logic ([`dojo/finding/helper.py`](../dojo/finding/helper.py)) are deliberately kept in separate modules instead of fat models or views. **Single Responsibility:** [`dojo/authorization/`](../dojo/authorization) is split into eleven single-purpose files, including `roles_permissions.py`, `authorization.py`, `authorization_decorators.py`, `query_filters.py`, `url_permissions.py`, `api_permissions.py`, `template_filters.py`, `serializer_guards.py`, and `middleware.py`.
 
 ### 13. Explain and implement test-driven development
 
@@ -110,7 +110,7 @@ Five outcomes are a real stretch for this project as it stands today, and I'd ra
 - **Outcome 2 (team-based design):** the *project's* process is team-based; *my* work on my fork, for this assignment, is not.
 - **Outcome 6 (operation contracts):** the closest evidence - DRF serializer `validate()` methods - enforces API input preconditions, not domain-model pre/postconditions in the Larman sense.
 - **Outcome 13 (TDD):** a large, CI-enforced test suite proves testing discipline, not that any of it was written test-first.
-- **Outcome 14 (GUI/IDE development):** server-rendered Django templates satisfy the letter of the outcome but not really its spirit of hands-on IDE GUI-builder work.
+- **Outcome 14 (GUI/IDE development):** server-rendered Django templates satisfy the letter of the outcome but not its spirit of hands-on IDE GUI-builder work.
 - **Outcome 15 (Software Architecture Document):** the existing architecture page is a 51-line component list, not a formal SAD - this one doesn't exist yet.
 
 ## AI Use Log
@@ -120,12 +120,13 @@ Five outcomes are a real stretch for this project as it stands today, and I'd ra
 **What I asked it to do, and what it did:**
 
 1. Verified the fork/remote setup was already correct (`origin` → `tlmcguire/django-DefectDojo`, `upstream` → `DefectDojo/django-DefectDojo`) by running `git remote -v` and cross-checking with `gh repo view --json isFork,parent`, rather than assuming.
-2. Checked whether the fork's wiki was actually initialized (not just the `has_wiki` flag) by attempting to clone `django-DefectDojo.wiki.git`, which confirmed no wiki pages exist yet.
+2. Checked whether the fork's wiki was initialized (not just the `has_wiki` flag) by attempting to clone `django-DefectDojo.wiki.git`, which confirmed no wiki pages exist yet.
 3. Created a `coursework/csci360-project-outcome-analysis` branch off `master` rather than committing coursework directly to the branch that mirrors the current release line.
 4. Created the top-level `class-docs/` directory (avoiding `/docs`, which is DefectDojo's own Hugo documentation site) to hold this file and future diagrams.
 5. Ran a dedicated research pass across the codebase - `dojo/finding/models.py`, `dojo/engagement/models.py`, `dojo/importers/`, `dojo/tools/factory.py`, `dojo/notifications/helper.py`, `dojo/authorization/`, `.github/`, `docker-compose.yml`, and the `unittests/` tree - to find candidate evidence for each of the seventeen outcomes.
 6. Ran a second, dedicated verification pass: re-checked every citation above (file path, class name, function name, line number) with direct `grep`/`find` commands against the repository, rather than trusting the first pass's memory of the code.
-7. That verification pass changed three verdicts: outcomes 6 (operation contracts) and 13 (TDD) were downgraded from an unqualified Yes to Partially, because the cited code supports an analogy to the outcome rather than the outcome itself; outcome 1 (Unified Process) was qualified to distinguish "iterative delivery" (well supported) from "formal Unified Process phases" (not documented anywhere in this project). Outcome 15 was confirmed as a clear No after actually reading the architecture document (51 lines, a component list) rather than assuming its content.
-8. Flagged five outcomes (2, 6, 13, 14, 15) as genuinely weak or partial fits, with the specific reasoning behind each, instead of claiming full support across the board.
+7. That verification pass changed three verdicts: outcomes 6 (operation contracts) and 13 (TDD) were downgraded from an unqualified Yes to Partially, because the cited code supports an analogy to the outcome rather than the outcome itself; outcome 1 (Unified Process) was qualified to distinguish "iterative delivery" (well supported) from "formal Unified Process phases" (not documented anywhere in this project). Outcome 15 was confirmed as a clear No after reading the architecture document (51 lines, a component list) rather than assuming its content.
+8. Flagged five outcomes (2, 6, 13, 14, 15) as weak or partial fits, with the specific reasoning behind each, instead of claiming full support across the board.
+9. Re-verified this document a second time: re-ran every file-path, class-name, function-name, and line-number citation above against the current repository rather than trusting the original pass, and updated one that had drifted (`dojo/authorization/` had grown from ten single-purpose files to eleven since this was first written, with `authorization_decorators.py` added).
 
-**Net effect:** every citation in this document points at a real file and was checked against this repository before being written down, and every yes/no/partial verdict was reconsidered against what the outcome actually asks for rather than just whether related code exists.
+**Net effect:** every citation in this document points at a real file and was checked against this repository before being written down, and every yes/no/partial verdict was reconsidered against what the outcome asks for rather than just whether related code exists.
