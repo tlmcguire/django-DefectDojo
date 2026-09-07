@@ -115,6 +115,10 @@ DefectDojo.
 
 0. In dev branch, the code should be python 3.13 compliant.
 
+Once submitted, your PR is validated by a chain of GitHub Actions checks (linting, unit tests,
+integration tests, a Kubernetes deployment test, and more) before it can merge. See
+[CI.md](CI.md) for what each check does and how to reproduce or troubleshoot one locally.
+
 [dojo_settings]: /dojo/settings/settings.dist.py "DefectDojo settings file"
 [pep8]: https://www.python.org/dev/peps/pep-0008/ "PEP8"
 [flake8 built-in commit hooks]: https://flake8.pycqa.org/en/latest/user/using-hooks.html#built-in-hook-integration

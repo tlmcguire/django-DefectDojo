@@ -65,6 +65,7 @@ if running DefectDojo in detached mode via `docker compose up -d`, obtain admin 
 * [Supported tools](https://docs.defectdojo.com/en/connecting_your_tools/parsers/)
 * [How to Write Documentation Locally](/docs/README.md)
 * [Development](readme-docs/DOCKER.md#run-with-docker-compose-in-development-mode-with-hot-reloading)
+* [Continuous Integration](readme-docs/CI.md) - what runs on a pull request, and how to troubleshoot a failing check
 
 ## Supported Installation Options
 
