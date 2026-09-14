@@ -18,6 +18,11 @@ into the upstream project's docs.
 - `domain-model.md` - source for the domain model referenced from that same wiki page: a
   Mermaid conceptual class diagram of the vulnerability-management domain this project
   addresses, plus the reasoning behind which concepts were included.
+- `requirements-and-use-cases.md` - source for the "Requirements and Use Cases" wiki page
+  (assignment A1b): FURPS+ requirements, actors, brief and fully-dressed use cases, and a use
+  case diagram, all cited against real files/classes in the codebase.
+- `use-case-diagram.puml` / `use-case-diagram.png` - PlantUML source and rendered diagram
+  referenced from that same wiki page.
 - `keynotes/` - slide decks for in-class presentation of each assignment:
   - `Project-Outcome-Analysis.pptx` (assignment A1c)
   - `Build-Demo-and-Applied-Analysis.pptx` (assignment A2), including a native redraw of

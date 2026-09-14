@@ -1,0 +1,26 @@
+@startuml
+' Use case diagram for the Requirements and Use Cases assignment (A1b).
+' System boundary is DefectDojo itself; use cases are the three brief/fully-dressed
+' use cases from requirements-and-use-cases.md.
+left to right direction
+skinparam packageStyle rectangle
+
+actor "AppSec Engineer\n(primary)" as engineer
+actor "JIRA\n(supporting)" as jira
+actor "Compliance Reviewer\n(offstage)" as reviewer
+
+rectangle "DefectDojo" {
+  usecase "Import Scan Results" as UC1
+  usecase "Triage a Finding" as UC2
+  usecase "Accept Risk for a Finding" as UC3
+}
+
+engineer --> UC1
+engineer --> UC2
+engineer --> UC3
+
+UC2 ..> jira : <<uses>>\n(push finding to JIRA)
+
+reviewer ..> UC2 : reviews SLA outcome of\n(never touches the system)
+reviewer ..> UC3 : reviews risk-acceptance\nrecord of (never touches the system)
+@enduml
