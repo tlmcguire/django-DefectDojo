@@ -1,0 +1,5 @@
+sequenceDiagram
+    actor Engineer
+    participant S as :DefectDojoSystem
+    Engineer->>S: importScanResults(engagementId, scanType, reportFile)
+    S-->>Engineer: importSummary(newFindingCount, closedFindingCount)

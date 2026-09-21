@@ -1,0 +1,7 @@
+sequenceDiagram
+    actor Engineer
+    participant S as :DefectDojoSystem
+    Engineer->>S: openFinding(findingId)
+    S-->>Engineer: findingDetail
+    Engineer->>S: saveFinding(findingId, severity, status)
+    S-->>Engineer: savedFinding

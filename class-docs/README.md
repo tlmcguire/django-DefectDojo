@@ -23,6 +23,13 @@ into the upstream project's docs.
   case diagram, all cited against real files/classes in the codebase.
 - `use-case-diagram.puml` / `use-case-diagram.png` - PlantUML source and rendered diagram
   referenced from that same wiki page.
+- `ssds-and-operation-contracts.md` - source for the "SSDs and Operation Contracts" wiki page
+  (assignment A2b): a noun-phrase analysis of the three fully-dressed use cases that revises
+  the domain model to eleven classes, one system sequence diagram per use case, and three
+  operation contracts, all cited against real files/classes in the codebase.
+- `ssd-import-scan-results.mmd`, `ssd-triage-a-finding.mmd`,
+  `ssd-accept-risk-for-a-finding.mmd` - Mermaid source for the three SSDs referenced from that
+  same wiki page.
 - `keynotes/` - slide decks for in-class presentation of each assignment:
   - `Project-Outcome-Analysis.pptx` (assignment A1c)
   - `Build-Demo-and-Applied-Analysis.pptx` (assignment A2), including a native redraw of

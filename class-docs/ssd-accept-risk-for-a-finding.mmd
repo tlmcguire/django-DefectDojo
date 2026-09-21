@@ -1,0 +1,7 @@
+sequenceDiagram
+    actor Engineer
+    participant S as :DefectDojoSystem
+    Engineer->>S: startRiskAcceptance(findingId)
+    S-->>Engineer: acceptanceForm(suggestedName, owner)
+    Engineer->>S: submitRiskAcceptance(findingIds, name, justification, expirationDate)
+    S-->>Engineer: riskAcceptanceList
