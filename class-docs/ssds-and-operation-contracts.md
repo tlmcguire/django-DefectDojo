@@ -6,8 +6,10 @@ Prepared with Claude Code (Anthropic), run directly inside the local clone of th
 branch `master`. Every class, field, and line number cited below was checked directly against
 this repository - `dojo/test/models.py`, `dojo/tool_config/models.py`,
 `dojo/notifications/models.py`, `dojo/jira/models.py`, `dojo/risk_acceptance/models.py`,
-`dojo/finding/models.py`, `dojo/product/models.py`, `dojo/engagement/models.py` - not recalled
-from general knowledge of DefectDojo. Full disclosure is in the AI Use Log at the bottom.
+`dojo/finding/models.py`, `dojo/product/models.py`, `dojo/engagement/models.py`,
+`dojo/product_type/models.py`, `dojo/authorization/models.py`, `dojo/models.py` (for
+`SLA_Configuration`), `dojo/reports/ui/views.py` - not recalled from general knowledge of
+DefectDojo. Full disclosure is in the AI Use Log at the bottom.
 
 This builds directly on
 [`requirements-and-use-cases.md`](requirements-and-use-cases.md) (the three fully-dressed use
@@ -18,8 +20,9 @@ cases: Import Scan Results, Triage a Finding, Accept Risk for a Finding) and
 
 Noun phrases below are cited to the use case step (or precondition/extension) they came from.
 "Conceptual class" and "Attribute" entries that are new are marked **(new)**; everything else
-already existed in the seven-class model. The revised domain model with all eleven classes is
-in [`domain-model.md`](domain-model.md); the reasoning for each addition is there too.
+already existed in the seven-class model. The revised domain model - sixteen classes after a
+second pass described in the "Updated Domain Model" subsection below - is in
+[`domain-model.md`](domain-model.md); the reasoning for each addition is there too.
 
 ### Import Scan Results
 
@@ -45,14 +48,14 @@ in [`domain-model.md`](domain-model.md); the reasoning for each addition is ther
 |---|---|---|---|
 | Finding | step 1 | Conceptual class | Already in the domain model. |
 | edit view | step 1 | Neither | UI. |
-| JIRA project | step 2 | Attribute of Product **(new: `Product.jiraProjectKey`)** | Checked against `JIRA_Project.project_key` (`dojo/jira/models.py:105`) - a stored identifier, not something with its own behavior in this domain model. |
+| JIRA project | step 2 | Attribute of Product, initially **(new: `Product.jiraProjectKey`)** | Checked against `JIRA_Project.project_key` (`dojo/jira/models.py:105`) - at this point, a stored identifier, not something with its own behavior. Later promoted to its own **JiraProject** class once "Configure a Product's JIRA Project" was added as a second-revision interaction - see "Updated Domain Model" below. |
 | JIRA sub-form | step 2 | Neither | UI element. |
 | severity | step 3 | Attribute of Finding | Already modeled. |
 | status | step 3 | Attribute of Finding | Already modeled. |
 | Engineer (`last_reviewed_by`) | step 4 | Association, not attribute | A person, not text - checked against `Finding.last_reviewed_by`, a foreign key to `Dojo_User` (`dojo/finding/models.py:318`), so it becomes `Engineer -- Finding : reviewedBy`, reusing the same Engineer class. |
 | `last_reviewed` (date) | step 4 | Attribute of Finding **(new: `Finding.reviewedDate`)** | Checked against `Finding.last_reviewed` (`dojo/finding/models.py:314`). |
 | false-positive history | step 5 | Neither | Internal bookkeeping the system uses for future deduplication; the domain-relevant fact is already covered by `Finding.status`. |
-| JIRA issue key | extension 3a | Attribute of Finding **(new: `Finding.jiraIssueKey`)** | Checked against `JIRA_Issue.jira_key` (`dojo/jira/models.py:186`) - a stored identifier, same reasoning as the JIRA project key above. |
+| JIRA issue key | extension 3a | Attribute of Finding, initially **(new: `Finding.jiraIssueKey`)** | Checked against `JIRA_Issue.jira_key` (`dojo/jira/models.py:186`) - same reasoning as the JIRA project key above, and later promoted to its own **JiraIssue** class the same way. |
 | success message | step 6 | Neither | UI feedback. |
 
 ### Accept Risk for a Finding
@@ -69,6 +72,156 @@ in [`domain-model.md`](domain-model.md); the reasoning for each addition is ther
 | Note | step 5 | Conceptual class, and a missing association | Already in the domain model, but the justification is saved as a Note on the *acceptance*, not the Finding - checked against `Risk_Acceptance.notes` (`dojo/risk_acceptance/models.py:61`). Added as `RiskAcceptance -- Note : annotatedBy`. |
 | full risk acceptance enabled | extension 1a | Attribute of Product **(new: `Product.fullRiskAcceptanceEnabled`)** | Checked against `Product.enable_full_risk_acceptance` (`dojo/product/models.py:118`) - a per-product setting real enough to gate what the Engineer is allowed to do, but still a boolean value, not a class. |
 | risk-acceptance list | step 6 | Neither | UI display. |
+
+### Updated Domain Model
+
+Diagram source: [`class-docs/domain-model.md`](https://github.com/tlmcguire/django-DefectDojo/blob/master/class-docs/domain-model.md).
+Kept there rather than duplicated as a separate source file, since it's the same model the
+Build Demo wiki page already references - this page just revises it in place, the same way the
+noun-phrase tables above revise it. The sixteen-class version below reflects two revisions:
+the noun-phrase pass over the three fully-dressed use cases (tables above), and a second pass
+over interactions those three use cases don't touch - creating a Product, configuring its SLA
+thresholds and team membership, grouping related Findings, and tying a Finding to the specific
+file/line/library that caused it. Full reasoning for both revisions is in `domain-model.md`.
+
+```mermaid
+classDiagram
+    class Product {
+        name
+        description
+    }
+    class ProductType {
+        name
+        description
+    }
+    class SLAConfiguration {
+        name
+        criticalDays
+        highDays
+        mediumDays
+        lowDays
+    }
+    class Engagement {
+        name
+        startDate
+        endDate
+        status
+    }
+    class Test {
+        testType
+        scanDate
+    }
+    class Finding {
+        title
+        severity
+        status
+        discoveredDate
+        hashCode
+        reviewedDate
+        filePath
+        lineNumber
+        componentName
+        componentVersion
+    }
+    class FindingGroup {
+        name
+        creationDate
+    }
+    class Endpoint {
+        host
+        port
+        path
+    }
+    class RiskAcceptance {
+        name
+        expirationDate
+        justification
+    }
+    class Note {
+        text
+        date
+    }
+    class Engineer {
+        name
+        email
+    }
+    class ToolConfiguration {
+        name
+        toolType
+    }
+    class Import {
+        importDate
+        newFindingCount
+        closedFindingCount
+    }
+    class Notification {
+        message
+        sentDate
+    }
+    class JiraProject {
+        projectKey
+        component
+        pushAllIssues
+    }
+    class JiraIssue {
+        issueKey
+        createdDate
+        changedDate
+    }
+
+    ProductType "1" -- "0..*" Product : classifies
+    SLAConfiguration "1" -- "0..*" Product : governs
+    Engineer "0..*" -- "0..*" Product : memberOf
+    Product "1" -- "0..*" Engagement : has
+    Engagement "1" -- "0..*" Test : includes
+    Test "1" -- "0..*" Finding : produces
+    Test "1" -- "0..*" FindingGroup : groups
+    Finding "0..*" -- "0..*" FindingGroup : groupedIn
+    Engineer "1" -- "0..*" FindingGroup : createdBy
+    Finding "0..*" -- "0..*" Endpoint : observedAt
+    Finding "0..*" -- "0..*" RiskAcceptance : coveredBy
+    Finding "0..*" -- "0..*" Note : annotatedBy
+    Finding "0..1 original" -- "0..* duplicates" Finding : duplicateOf
+    Finding "0..1" -- "0..1" JiraIssue : linkedTo
+    Product "0..1" -- "0..1" JiraProject : configuredWith
+    Product "0..*" -- "0..*" ToolConfiguration : configuredWith
+    Test "1" -- "0..*" Import : recordedBy
+    Engineer "0..1" -- "0..*" Notification : notifies
+    Engineer "0..1" -- "0..*" Finding : reviewedBy
+    Engineer "1" -- "0..*" RiskAcceptance : ownedBy
+    Engagement "1" -- "0..*" RiskAcceptance : has
+    RiskAcceptance "0..*" -- "0..*" Note : annotatedBy
+```
+
+Every class, attribute, and association traces back to a use case - none of it is speculative:
+
+| Model element | Use case it traces to |
+|---|---|
+| Engineer (class) | All three fully-dressed use cases - it's the primary actor in every main success scenario. |
+| ToolConfiguration (class); Product `--` ToolConfiguration : configuredWith | Import Scan Results, precondition. |
+| Import (class); Test `--` Import : recordedBy | Import Scan Results, step 6. |
+| Notification (class); Engineer `--` Notification : notifies | Import Scan Results, step 7. |
+| `Finding.hashCode` | Import Scan Results, step 4. |
+| `Finding.reviewedDate`; Engineer `--` Finding : reviewedBy | Triage a Finding, step 4. |
+| Engineer `--` RiskAcceptance : ownedBy | Accept Risk for a Finding, step 1. |
+| Engagement `--` RiskAcceptance : has | Accept Risk for a Finding, step 4. |
+| RiskAcceptance `--` Note : annotatedBy | Accept Risk for a Finding, step 5. |
+| `Product.fullRiskAcceptanceEnabled`\* | Accept Risk for a Finding, extension 1a. |
+| ProductType (class); `ProductType -- Product : classifies` | Create a Product (second-revision interaction). |
+| SLAConfiguration (class); `SLAConfiguration -- Product : governs` | Configure SLA Thresholds for a Product (second-revision interaction). |
+| Engineer `--` Product : memberOf | Add a Team Member to a Product (second-revision interaction); also the unmodeled precondition ("member of the Product") shared by all three fully-dressed use cases. |
+| FindingGroup (class) and its associations | Group Related Findings (second-revision interaction). |
+| JiraProject (class) | Configure a Product's JIRA Project (second-revision interaction) - promoted from the `Product.fullRiskAcceptanceEnabled`-style attribute the first revision used. |
+| JiraIssue (class) | Push a Finding to JIRA (second-revision interaction) - promoted from an attribute the same way. |
+| `Finding.filePath`, `.lineNumber`, `.componentName`, `.componentVersion` | Findings tied to a specific product/part of the code (second-revision interaction). |
+
+\* `Product.fullRiskAcceptanceEnabled` stayed an attribute across both revisions - unlike the
+JIRA fields, nothing about it gained a lifecycle worth a class.
+
+The full reasoning for every addition - and for what was deliberately left out, like a `Report`
+class (reports are rendered on demand, never persisted) or a `Role` association class on the new
+Product-Engineer membership - is in the "First revision," "Second revision," and "Deliberately
+excluded" sections of `domain-model.md`.
 
 ## Part 2: System Sequence Diagrams
 
@@ -228,8 +381,34 @@ repository.
    attribute set to a value, association formed) and checked each class and attribute named
    against the revised domain model above it, rather than inventing new terms mid-contract.
 8. Wrote the sections above; I reviewed and adjusted them before publishing.
+9. At my direction, brainstormed additional interactions the three fully-dressed use cases don't
+   touch (creating a Product, configuring SLA thresholds, adding a team member, grouping
+   Findings, generating a report, pushing/configuring JIRA tickets) and presented the list before
+   changing anything, so the direction was confirmed before the work was done.
+10. Grounded every confirmed interaction in a real model before adding anything: `Product_Type`
+    and `Product.prod_type` (`dojo/product_type/models.py:10`, `dojo/product/models.py:88`,
+    confirmed required), `SLA_Configuration` and `Product.sla_configuration`
+    (`dojo/models.py:239`, `dojo/product/models.py:90`, confirmed required with a default),
+    `Product_Member` (`dojo/authorization/models.py:120` - a Product/Dojo_User/Role join table),
+    `Finding_Group` (`dojo/finding/models.py:1537` - confirmed `creator` is a required FK, `test`
+    is a required FK, `findings` is many-to-many), and `Finding.file_path`/`line`/
+    `component_name`/`component_version` (`dojo/finding/models.py:346,350,355,360`). Also
+    checked `generate_report` (`dojo/reports/ui/views.py:353`) specifically for a persisted
+    "Report" model and found none - reports are rendered on demand from filtered querysets, not
+    stored - so "Report" was written up as a deliberate exclusion instead of a class.
+11. Re-examined `JIRA_Issue`/`JIRA_Project` (`dojo/jira/models.py:102,183`) against the newly
+    confirmed use cases ("push a Finding to JIRA," "configure a Product's JIRA project") and
+    promoted both from the first revision's plain attributes to full classes, since each has its
+    own settings/dates once there's a real interaction for creating and changing them, not just a
+    value being read.
+12. Rendered the resulting sixteen-class diagram through `mermaid.ink` the same way as before,
+    read the image to confirm every new class and association actually appears and nothing
+    overlapped illegibly, and updated the traceability table so every element - old and new -
+    points at a specific use case (the three fully-dressed ones, or one of the second-revision
+    interactions), not left as an unsourced addition.
 
-**Net effect:** every new class, attribute, and association in the revised domain model points
-at a real Django model and field checked directly in this repository, including the one place
-(Import-Engineer) where the real system turned out *not* to keep a fact the domain conceptually
-has, which is called out rather than assumed.
+**Net effect:** every new class, attribute, and association in the revised domain model - across
+both revisions - points at a real Django model and field checked directly in this repository,
+including the two places where the real system turned out *not* to keep a fact the domain
+conceptually has (Import-Engineer, and Report having no persisted identity), both called out
+rather than assumed or silently dropped.
