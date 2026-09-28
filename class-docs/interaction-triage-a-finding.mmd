@@ -1,0 +1,30 @@
+sequenceDiagram
+    actor Engineer
+    participant View as :EditFinding
+    participant Finding as :Finding
+    participant FindingHelper as finding_helper
+    participant RaHelper as ra_helper
+    participant Jira as jira_services
+
+    Engineer->>View: POST severity, status, jiraIssueKey
+    View->>View: process_forms(request, finding, context)
+    View->>View: process_finding_form(request, finding, context)
+    View->>Finding: get_numerical_severity(severity)
+    alt risk accepted inline
+        View->>RaHelper: simple_risk_accept(user, finding)
+    else previously-accepted risk unchecked
+        View->>RaHelper: risk_unaccept(user, finding)
+    end
+    View->>FindingHelper: add_locations(finding, form)
+    View->>FindingHelper: save_vulnerability_ids(finding, ids)
+    View->>FindingHelper: save_cwes(finding)
+    View->>View: process_jira_form(request, finding, context)
+    View->>Jira: link_finding(request, finding, issueKey)
+    View->>Finding: save(push_to_jira)
+    activate Finding
+    Finding->>Finding: set_hash_code(dedupe_option)
+    Finding->>Finding: set_sla_expiration_date()
+    Finding->>FindingHelper: post_process_finding_save(findingId, push_to_jira, user)
+    deactivate Finding
+    FindingHelper->>Jira: push(finding)
+    View-->>Engineer: redirect to view_finding

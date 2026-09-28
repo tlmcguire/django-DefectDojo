@@ -1,0 +1,52 @@
+flowchart TB
+    Browser["Browser client<br/>(server-rendered HTML)"]
+    APIClient["API client<br/>(JSON over HTTP)"]
+
+    subgraph Root["Composition root"]
+        urls["dojo/urls.py<br/>urlpatterns include()s + v2_api DefaultRouter"]
+    end
+
+    subgraph FindingModule["dojo/finding/"]
+        direction TB
+        F_ui["ui/views.py, ui/forms.py<br/>Django View classes"]
+        F_api["api/views.py, api/serializer.py<br/>DRF ViewSets"]
+        F_helper["helper.py, deduplication.py<br/>business logic"]
+        F_models["models.py<br/>Finding, BurpRawRequestResponse"]
+    end
+
+    subgraph EngagementModule["dojo/engagement/"]
+        direction TB
+        E_ui["ui/views.py"]
+        E_api["api/views.py"]
+        E_services["services.py<br/>close_engagement(), reopen_engagement()"]
+        E_models["models.py<br/>Engagement"]
+    end
+
+    subgraph Legacy["Legacy monolith (pre-reorg, still shared)"]
+        direction TB
+        apiv2["dojo/api_v2/views.py, serializers.py<br/>DojoModelViewSet base class,<br/>ImportScanView, ReImportScanView"]
+        core["dojo/models.py, forms.py, filters.py<br/>re-export hub + unmigrated models"]
+    end
+
+    Browser --> urls
+    APIClient --> urls
+    urls --> F_ui
+    urls --> F_api
+    urls --> E_ui
+    urls --> E_api
+    urls --> apiv2
+
+    F_ui --> F_helper
+    F_api --> F_helper
+    F_helper --> F_models
+
+    E_ui --> E_services
+    E_api --> E_services
+    E_services --> E_models
+
+    F_api -.->|"base viewset classes"| apiv2
+    E_api -.->|"base viewset classes"| apiv2
+    F_api -.->|"imports duplicate_cluster()<br/>etc. from ui/views.py"| F_ui
+
+    core -.->|"backward-compat<br/>re-export"| F_models
+    core -.->|"backward-compat<br/>re-export"| E_models

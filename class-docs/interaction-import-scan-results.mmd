@@ -1,0 +1,29 @@
+sequenceDiagram
+    actor Engineer
+    participant View as :ImportScanView
+    participant AutoCreate as :AutoCreateContextManager
+    participant Serializer as :ImportScanSerializer
+    participant Importer as :DefaultImporter
+    participant Factory as factory
+    participant Parser as :ScannerParser
+    participant Finding as :Finding
+    participant FindingHelper as finding_helper
+
+    Engineer->>View: POST engagementId, scanType, reportFile
+    View->>AutoCreate: get_target_engagement_if_exists(...)
+    View->>Serializer: save(push_to_jira)
+    Serializer->>AutoCreate: get_or_create_engagement(...)
+    Serializer->>Importer: process_scan(reportFile)
+    Importer->>Factory: get_parser(scanType)
+    Factory-->>Importer: parser
+    Importer->>Parser: get_findings(reportFile, test)
+    Parser-->>Importer: parsedFindings[]
+    loop each parsed finding
+        Importer->>Finding: set_hash_code(true)
+        Importer->>Finding: save_no_options()
+    end
+    Importer->>Importer: close_old_findings(existingFindings)
+    Importer->>Importer: update_import_history(newFindings, closedFindings)
+    Importer->>FindingHelper: post_process_findings_batch(findingIds, push_to_jira)
+    Importer-->>View: test, newCount, closedCount
+    View-->>Engineer: 201 Created

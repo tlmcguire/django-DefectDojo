@@ -30,6 +30,14 @@ into the upstream project's docs.
 - `ssd-import-scan-results.mmd`, `ssd-triage-a-finding.mmd`,
   `ssd-accept-risk-for-a-finding.mmd` - Mermaid source for the three SSDs referenced from that
   same wiki page.
+- `logical-architecture.md` - source for the "Logical Architecture and Interaction Diagrams" wiki
+  page (assignment A3): the architectural style paragraph, a logical architecture diagram, two
+  UML interaction diagrams (one expanding the "Triage a Finding" SSD, one expanding the "Import
+  Scan Results" SSD), one architectural concern, and two applied plus one violated GRASP pattern,
+  all cited against real files/classes/lines in the codebase.
+- `logical-architecture-diagram.mmd`, `interaction-triage-a-finding.mmd`,
+  `interaction-import-scan-results.mmd` - Mermaid source for the three diagrams referenced from
+  that same wiki page.
 - `keynotes/` - slide decks for in-class presentation of each assignment:
   - `Project-Outcome-Analysis.pptx` (assignment A1c)
   - `Build-Demo-and-Applied-Analysis.pptx` (assignment A2), including a native redraw of
