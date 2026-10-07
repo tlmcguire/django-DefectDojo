@@ -522,18 +522,18 @@ class ViewFinding(View):
         if similar_findings_enabled is False:
             return {
                 "similar_findings_enabled": similar_findings_enabled,
-                "duplicate_cluster": duplicate_cluster(request, finding),
+                "duplicate_cluster": finding_helper.duplicate_cluster(finding),
                 "similar_findings": None,
                 "similar_findings_filter": None,
             }
         # add related actions for non-similar and non-duplicate cluster members
-        finding.related_actions = calculate_possible_related_actions_for_similar_finding(
-            request, finding, finding,
+        finding.related_actions = finding_helper.calculate_possible_related_actions_for_similar_finding(
+            finding, finding,
         )
         if finding.duplicate_finding:
             finding.duplicate_finding.related_actions = (
-                calculate_possible_related_actions_for_similar_finding(
-                    request, finding, finding.duplicate_finding,
+                finding_helper.calculate_possible_related_actions_for_similar_finding(
+                    finding, finding.duplicate_finding,
                 )
             )
         filter_string_matching = get_system_setting("filter_string_matching", False)
@@ -558,14 +558,14 @@ class ViewFinding(View):
         )
         for similar_finding in similar_findings:
             similar_finding.related_actions = (
-                calculate_possible_related_actions_for_similar_finding(
-                    request, finding, similar_finding,
+                finding_helper.calculate_possible_related_actions_for_similar_finding(
+                    finding, similar_finding,
                 )
             )
 
         return {
             "similar_findings_enabled": similar_findings_enabled,
-            "duplicate_cluster": duplicate_cluster(request, finding),
+            "duplicate_cluster": finding_helper.duplicate_cluster(finding),
             "similar_findings": similar_findings,
             "similar_findings_filter": similar_findings_filter,
         }
@@ -3132,28 +3132,9 @@ def mark_finding_duplicate(request, original_id, duplicate_id):
     )
 
 
-def reset_finding_duplicate_status_internal(user, duplicate_id):
-    duplicate = get_object_or_404(Finding, id=duplicate_id)
-
-    if not duplicate.duplicate:
-        return None
-
-    logger.debug("resetting duplicate status of %i", duplicate.id)
-    duplicate.duplicate = False
-    duplicate.active = True
-    if duplicate.duplicate_finding:
-        # duplicate.duplicate_finding.original_finding.remove(duplicate)  # shouldn't be needed
-        duplicate.duplicate_finding = None
-    duplicate.last_reviewed = timezone.now()
-    duplicate.last_reviewed_by = user
-    duplicate.save(dedupe_option=False)
-
-    return duplicate.id
-
-
 @require_POST
 def reset_finding_duplicate_status(request, duplicate_id):
-    checked_duplicate_id = reset_finding_duplicate_status_internal(
+    checked_duplicate_id = finding_helper.reset_finding_duplicate_status_internal(
         request.user, duplicate_id,
     )
     if checked_duplicate_id is None:
@@ -3172,69 +3153,9 @@ def reset_finding_duplicate_status(request, duplicate_id):
     )
 
 
-def set_finding_as_original_internal(user, finding_id, new_original_id):
-    finding = get_object_or_404(Finding, id=finding_id)
-    new_original = get_object_or_404(
-        Finding.objects.filter(test__engagement__product=finding.test.engagement.product),
-        id=new_original_id,
-    )
-
-    if finding.test.engagement != new_original.test.engagement:
-        if (finding.test.engagement.deduplication_on_engagement
-                or new_original.test.engagement.deduplication_on_engagement):
-            return False
-
-    if finding.duplicate or finding.original_finding.all():
-        # existing cluster, so update all cluster members
-
-        if finding.duplicate and finding.duplicate_finding:
-            logger.debug(
-                "setting old original %i as duplicate of %i",
-                finding.duplicate_finding.id,
-                new_original.id,
-            )
-            finding.duplicate_finding.duplicate_finding = new_original
-            finding.duplicate_finding.duplicate = True
-            finding.duplicate_finding.save(dedupe_option=False)
-
-        for cluster_member in finding.duplicate_finding_set():
-            if cluster_member != new_original:
-                logger.debug(
-                    "setting new original for %i to %i",
-                    cluster_member.id,
-                    new_original.id,
-                )
-                cluster_member.duplicate_finding = new_original
-                cluster_member.save(dedupe_option=False)
-
-        logger.debug(
-            "setting new original for old root %i to %i", finding.id, new_original.id,
-        )
-        finding.duplicate = True
-        finding.duplicate_finding = new_original
-        finding.save(dedupe_option=False)
-
-    else:
-        # creating a new cluster, so mark finding as duplicate
-        logger.debug("marking %i as duplicate of %i", finding.id, new_original.id)
-        finding.duplicate = True
-        finding.active = False
-        finding.duplicate_finding = new_original
-        finding.last_reviewed = timezone.now()
-        finding.last_reviewed_by = user
-        finding.save(dedupe_option=False)
-
-    logger.debug("marking new original %i as not duplicate", new_original.id)
-    new_original.duplicate = False
-    new_original.duplicate_finding = None
-    new_original.save(dedupe_option=False)
-
-    return True
-
-
 @require_POST
 def set_finding_as_original(request, finding_id, new_original_id):
-    success = set_finding_as_original_internal(
+    success = finding_helper.set_finding_as_original_internal(
         request.user, finding_id, new_original_id,
     )
     if not success:
@@ -3323,119 +3244,3 @@ def push_to_jira(request, fid):
             request, messages.ERROR, "Error pushing to JIRA", extra_tags="alert-danger",
         )
         return HttpResponse(status=500)
-
-
-# precalculate because we need related_actions to be set
-def duplicate_cluster(request, finding):
-    duplicate_cluster = finding.duplicate_finding_set()
-
-    duplicate_cluster = prefetch_for_findings(duplicate_cluster)
-
-    # populate actions for findings in duplicate cluster
-    for duplicate_member in duplicate_cluster:
-        duplicate_member.related_actions = (
-            calculate_possible_related_actions_for_similar_finding(
-                request, finding, duplicate_member,
-            )
-        )
-
-    return duplicate_cluster
-
-
-# django doesn't allow much logic or even method calls with parameters in templates.
-# so we have to use a function in this view to calculate the possible actions on a similar (or duplicate) finding.
-# and we assign this dictionary to the finding so it can be accessed in the template.
-# these actions are always calculated in the context of the finding the user is viewing
-# because this determines which actions are possible
-def calculate_possible_related_actions_for_similar_finding(
-    request, finding, similar_finding,
-):
-    actions = []
-    if similar_finding.test.engagement != finding.test.engagement and (
-        similar_finding.test.engagement.deduplication_on_engagement
-        or finding.test.engagement.deduplication_on_engagement
-    ):
-        actions.append(
-            {
-                "action": "None",
-                "reason": ("This finding is in a different engagement and deduplication_inside_engagment "
-                           "is enabled here or in that finding"),
-            },
-        )
-    elif finding.duplicate_finding == similar_finding:
-        actions.append(
-            {
-                "action": "None",
-                "reason": ("This finding is the root of the cluster, use an action on another row, "
-                           "or the finding on top of the page to change the root of the cluser"),
-            },
-        )
-    elif similar_finding.original_finding.all():
-        actions.append(
-            {
-                "action": "None",
-                "reason": ("This finding is similar, but is already an original in a different cluster. "
-                           "Remove it from that cluster before you connect it to this cluster."),
-            },
-        )
-    elif similar_finding.duplicate_finding:
-        # reset duplicate status is always possible
-        actions.append(
-            {
-                "action": "reset_finding_duplicate_status",
-                "reason": ("This will remove the finding from the cluster, "
-                           "effectively marking it no longer as duplicate. "
-                           "Will not trigger deduplication logic after saving."),
-            },
-        )
-
-        if similar_finding.duplicate_finding in {finding, finding.duplicate_finding}:
-            # duplicate inside the same cluster
-            actions.append(
-                {
-                    "action": "set_finding_as_original",
-                    "reason": ("Sets this finding as the Original for the whole cluster. "
-                               "The existing Original will be downgraded to become a member of the cluster and, "
-                               "together with the other members, will be marked as duplicate of the new Original."),
-                },
-            )
-        else:
-            # duplicate inside different cluster
-            actions.append(
-                {
-                    "action": "mark_finding_duplicate",
-                    "reason": ("Will mark this finding as duplicate of the root finding in this cluster, "
-                               "effectively adding it to the cluster and removing it from the other cluster."),
-                },
-            )
-    # similar is not a duplicate yet
-    elif finding.duplicate or finding.original_finding.all():
-        actions.extend((
-            {
-                "action": "mark_finding_duplicate",
-                "reason": "Will mark this finding as duplicate of the root finding in this cluster",
-            }, {
-                "action": "set_finding_as_original",
-                "reason": (
-                    "Sets this finding as the Original for the whole cluster. "
-                    "The existing Original will be downgraded to become a member of the cluster and, "
-                    "together with the other members, will be marked as duplicate of the new Original."
-                ),
-            },
-        ))
-    else:
-        # similar_finding is not an original/root of a cluster as per earlier if clause
-        actions.extend((
-            {
-                "action": "mark_finding_duplicate",
-                "reason": "Will mark this finding as duplicate of the finding on this page.",
-            }, {
-                "action": "set_finding_as_original",
-                "reason": (
-                    "Sets this finding as the Original marking the finding "
-                    "on this page as duplicate of this original."
-                ),
-            },
-        ))
-
-    return actions

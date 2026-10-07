@@ -56,11 +56,6 @@ from dojo.finding.api.serializer import (
     FindingVerifySerializer,
 )
 from dojo.finding.queries import get_authorized_findings
-from dojo.finding.ui.views import (
-    duplicate_cluster,
-    reset_finding_duplicate_status_internal,
-    set_finding_as_original_internal,
-)
 from dojo.jira import services as jira_services
 from dojo.location.feature import locations_enabled
 from dojo.models import (
@@ -657,7 +652,7 @@ class FindingViewSet(
     )
     def get_duplicate_cluster(self, request, pk):
         finding = self.get_object()
-        result = duplicate_cluster(request, finding)
+        result = finding_helper.duplicate_cluster(finding)
         serializer = FindingSerializer(
             instance=result, many=True, context={"request": request},
         )
@@ -670,7 +665,7 @@ class FindingViewSet(
     @action(detail=True, methods=["post"], url_path=r"duplicate/reset", permission_classes=(IsAuthenticated, permissions.UserHasFindingRelatedObjectPermission))
     def reset_finding_duplicate_status(self, request, pk):
         self.get_object()
-        checked_duplicate_id = reset_finding_duplicate_status_internal(
+        checked_duplicate_id = finding_helper.reset_finding_duplicate_status_internal(
             request.user, pk,
         )
         if checked_duplicate_id is None:
@@ -691,7 +686,7 @@ class FindingViewSet(
     )
     def set_finding_as_original(self, request, pk, new_fid):
         self.get_object()
-        success = set_finding_as_original_internal(request.user, pk, new_fid)
+        success = finding_helper.set_finding_as_original_internal(request.user, pk, new_fid)
         if not success:
             return Response(status=status.HTTP_400_BAD_REQUEST)
         return Response(status=status.HTTP_204_NO_CONTENT)
