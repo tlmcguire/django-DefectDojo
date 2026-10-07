@@ -1,0 +1,30 @@
+classDiagram
+    class ModelSignal {
+        <<Django django.db.models.signals>>
+        +connect(receiver, sender) None
+        +send(sender, instance, kwargs) list
+    }
+    class post_delete {
+        <<ModelSignal instance>>
+    }
+    class Test {
+        <<Subject: model that is the signal sender>>
+        +delete() tuple
+    }
+    class test_signals_test_post_delete {
+        <<Observer in dojo/test/signals.py>>
+        +test_post_delete(sender, instance, using, origin, kwargs) None
+    }
+    class finding_helper_test_post_delete {
+        <<Observer in dojo/finding/helper.py: logs only>>
+        +test_post_delete(sender, instance, kwargs) None
+    }
+    class create_notification {
+        <<function in dojo/notifications/helper.py>>
+        +create_notification(event, title, recipients, kwargs) None
+    }
+    ModelSignal <|-- post_delete
+    Test ..> post_delete : Django sends after a Test is deleted
+    post_delete o-- "many" test_signals_test_post_delete : receivers for sender=Test
+    post_delete o-- "many" finding_helper_test_post_delete : receivers for sender=Test
+    test_signals_test_post_delete ..> create_notification : event test_deleted

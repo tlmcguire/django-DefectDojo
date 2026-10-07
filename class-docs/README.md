@@ -38,6 +38,13 @@ into the upstream project's docs.
 - `logical-architecture-diagram.mmd`, `interaction-triage-a-finding.mmd`,
   `interaction-import-scan-results.mmd` - Mermaid source for the three diagrams referenced from
   that same wiki page.
+- `design-patterns.md` - source for the "Design Patterns" wiki page (assignment A8): three GoF
+  patterns found in the codebase (Factory, Template Method, Observer), one missing pattern
+  (Strategy for deduplication dispatch) with its before/after, the GRASP refactoring, and the
+  GoF/GRASP comparison. The two code changes are separate commits, not files here.
+- `pattern-factory-parsers.mmd`, `pattern-template-method-importer.mmd`,
+  `pattern-observer-signals.mmd`, `missing-pattern-strategy-before.mmd`,
+  `missing-pattern-strategy-after.mmd` - Mermaid source for the five class diagrams on that page.
 - `keynotes/` - slide decks for in-class presentation of each assignment:
   - `Project-Outcome-Analysis.pptx` (assignment A1c)
   - `Build-Demo-and-Applied-Analysis.pptx` (assignment A2), including a native redraw of

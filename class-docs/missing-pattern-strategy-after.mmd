@@ -1,0 +1,24 @@
+classDiagram
+    class DeduplicationStrategy {
+        <<frozen dataclass>>
+        +name : str
+        +match_batch : Callable
+        +dedupe_batch : Callable
+    }
+    class DEDUPLICATION_STRATEGIES {
+        <<dict, module level>>
+        hash_code
+        unique_id_from_tool
+        unique_id_from_tool_or_hash_code
+        legacy
+    }
+    class deduplication_module {
+        <<module dojo.finding.deduplication>>
+        +get_deduplication_strategy(algorithm) DeduplicationStrategy
+        +do_dedupe_finding_task_internal(new_finding) None
+        +match_batch_of_findings(findings) list
+        +dedupe_batch_of_findings(findings) list
+    }
+    DEDUPLICATION_STRATEGIES o-- "4" DeduplicationStrategy
+    deduplication_module ..> DEDUPLICATION_STRATEGIES : lookup by name
+    deduplication_module ..> DeduplicationStrategy : match_batch / dedupe_batch

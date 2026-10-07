@@ -1,0 +1,40 @@
+classDiagram
+    class factory {
+        <<module dojo.tools.factory>>
+        +PARSERS : dict~str, Parser~
+        +register(parser_type) None
+        +register_parser(scan_type, parser) None
+        +get_parser(scan_type) Parser
+        +requires_file(scan_type) bool
+    }
+    class Parser {
+        <<duck-typed interface>>
+        +get_scan_types() list~str~
+        +get_label_for_scan_types(scan_type) str
+        +get_description_for_scan_types(scan_type) str
+        +get_findings(scan_file, test) list~Finding~
+    }
+    class AcunetixParser {
+        +get_findings(filename, test) list~Finding~
+    }
+    class TrivyParser {
+        +get_findings(scan_file, test) list~Finding~
+    }
+    class OtherParsers {
+        <<one class per dojo/tools/name/parser.py>>
+    }
+    class BaseImporter {
+        +get_parser() Parser
+        #parse_findings(scan, parser) list~Finding~
+    }
+    class Test_Type {
+        +name : str
+        +active : bool
+    }
+    Parser <|.. AcunetixParser
+    Parser <|.. TrivyParser
+    Parser <|.. OtherParsers
+    factory o-- "many" Parser : PARSERS registry
+    factory ..> Test_Type : get_or_create + active check
+    BaseImporter ..> factory : get_parser(scan_type)
+    BaseImporter ..> Parser : get_findings()

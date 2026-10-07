@@ -1,0 +1,28 @@
+classDiagram
+    class BaseImporter {
+        <<abstract by convention>>
+        +process_scan(scan, args, kwargs) tuple
+        +process_findings(parsed_findings, kwargs) list~Finding~
+        +close_old_findings(findings, kwargs) list~Finding~
+        +process_scan_file(scan) TemporaryUploadedFile
+        +parse_findings(scan, parser) list~Finding~
+        #parse_findings_static_test_type(scan, parser) list~Finding~
+        #parse_findings_dynamic_test_type(scan, parser) list~Finding~
+        +check_child_implementation_exception() None
+        +update_timestamps() None
+        +update_import_history(...) Test_Import
+    }
+    class DefaultImporter {
+        +process_scan(scan, args, kwargs) tuple
+        +process_findings(parsed_findings, kwargs) list~Finding~
+        +close_old_findings(findings, kwargs) list~Finding~
+        +create_test(test_type_name) Test
+    }
+    class DefaultReImporter {
+        +process_scan(scan, args, kwargs) tuple
+        +process_findings(parsed_findings, kwargs) list~Finding~
+        +close_old_findings(findings, kwargs) list~Finding~
+    }
+    BaseImporter <|-- DefaultImporter
+    BaseImporter <|-- DefaultReImporter
+    note for BaseImporter "parse_findings() is the template: calls the overridable hook process_scan_file(), then picks the static or dynamic step.\nprocess_scan / process_findings / close_old_findings are abstract steps; the base raises NotImplementedError via check_child_implementation_exception()."

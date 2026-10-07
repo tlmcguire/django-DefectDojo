@@ -1,0 +1,17 @@
+classDiagram
+    class deduplication_module {
+        <<module dojo.finding.deduplication>>
+        +do_dedupe_finding_task_internal(new_finding) None
+        +match_batch_of_findings(findings) list
+        +dedupe_batch_of_findings(findings) list
+        +do_false_positive_history(finding) None
+        +match_finding_to_existing_findings(finding) QuerySet
+    }
+    class AlgorithmChains {
+        <<7 if/elif chains on test.deduplication_algorithm>>
+        hash_code
+        unique_id_from_tool
+        unique_id_from_tool_or_hash_code
+        legacy
+    }
+    deduplication_module *-- AlgorithmChains : each entry point re-tests the algorithm name
