@@ -1,5 +1,6 @@
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from operator import attrgetter
 
 import hyperlink
@@ -92,15 +93,9 @@ def do_dedupe_finding_task_internal(new_finding, *args, **kwargs):
                     + ":" + str(new_finding.title))
         deduplicationAlgorithm = new_finding.test.deduplication_algorithm
         deduplicationLogger.debug("deduplication algorithm: " + deduplicationAlgorithm)
-        if deduplicationAlgorithm == settings.DEDUPE_ALGO_UNIQUE_ID_FROM_TOOL:
-            deduplicate_unique_id_from_tool(new_finding)
-        elif deduplicationAlgorithm == settings.DEDUPE_ALGO_HASH_CODE:
-            deduplicate_hash_code(new_finding)
-        elif deduplicationAlgorithm == settings.DEDUPE_ALGO_UNIQUE_ID_FROM_TOOL_OR_HASH_CODE:
-            deduplicate_uid_or_hash_code(new_finding)
-        else:
+        if deduplicationAlgorithm not in DEDUPLICATION_STRATEGIES:
             deduplicationLogger.debug("no configuration per parser found; using legacy algorithm")
-            deduplicate_legacy(new_finding)
+        get_deduplication_strategy(deduplicationAlgorithm).dedupe_batch([new_finding])
     else:
         deduplicationLogger.debug("dedupe: skipping dedupe because it's disabled in system settings get()")
     return None
@@ -908,14 +903,7 @@ def match_batch_of_findings(findings):
     if findings[0].pk is not None:
         findings = sorted(findings, key=attrgetter("id"))
     test = findings[0].test
-    dedup_alg = test.deduplication_algorithm
-    if dedup_alg == settings.DEDUPE_ALGO_HASH_CODE:
-        return match_batch_hash_code(findings)
-    if dedup_alg == settings.DEDUPE_ALGO_UNIQUE_ID_FROM_TOOL:
-        return match_batch_unique_id(findings)
-    if dedup_alg == settings.DEDUPE_ALGO_UNIQUE_ID_FROM_TOOL_OR_HASH_CODE:
-        return match_batch_uid_or_hash(findings)
-    return match_batch_legacy(findings)
+    return get_deduplication_strategy(test.deduplication_algorithm).match_batch(findings)
 
 
 # ---------------------------------------------------------------------------
@@ -1010,6 +998,44 @@ def _dedupe_batch_legacy(findings):
     return _flush_duplicate_changes(modified_new_findings)
 
 
+@dataclass(frozen=True)
+class DeduplicationStrategy:
+
+    """
+    One interchangeable deduplication algorithm.
+
+    match_batch:  find (new_finding, existing_finding) pairs without persisting anything.
+    dedupe_batch: match and persist the duplicate status changes.
+    """
+
+    name: str
+    match_batch: Callable
+    dedupe_batch: Callable
+
+
+# Adding an algorithm means adding one entry here (plus its setting constant); the dispatchers
+# above and below never change. LEGACY is both an entry and the fallback for unknown names.
+DEDUPLICATION_STRATEGIES = {
+    settings.DEDUPE_ALGO_HASH_CODE: DeduplicationStrategy(
+        "DEDUPE_ALGO_HASH_CODE", match_batch_hash_code, _dedupe_batch_hash_code,
+    ),
+    settings.DEDUPE_ALGO_UNIQUE_ID_FROM_TOOL: DeduplicationStrategy(
+        "DEDUPE_ALGO_UNIQUE_ID_FROM_TOOL", match_batch_unique_id, _dedupe_batch_unique_id,
+    ),
+    settings.DEDUPE_ALGO_UNIQUE_ID_FROM_TOOL_OR_HASH_CODE: DeduplicationStrategy(
+        "DEDUPE_ALGO_UNIQUE_ID_FROM_TOOL_OR_HASH_CODE", match_batch_uid_or_hash, _dedupe_batch_uid_or_hash,
+    ),
+    settings.DEDUPE_ALGO_LEGACY: DeduplicationStrategy(
+        "DEDUPE_ALGO_LEGACY", match_batch_legacy, _dedupe_batch_legacy,
+    ),
+}
+
+
+def get_deduplication_strategy(algorithm):
+    """Return the strategy for the algorithm name, falling back to legacy for unknown names."""
+    return DEDUPLICATION_STRATEGIES.get(algorithm, DEDUPLICATION_STRATEGIES[settings.DEDUPE_ALGO_LEGACY])
+
+
 def dedupe_batch_of_findings(findings, *args, **kwargs):
     """Batch deduplicate a list of findings. The findings are assumed to be in the same test."""
     # Pro has customer implementation which will call the Pro dedupe methods, but also the normal OS dedupe methods.
@@ -1029,19 +1055,9 @@ def dedupe_batch_of_findings(findings, *args, **kwargs):
         findings = sorted(findings, key=attrgetter("id"))
 
         test = findings[0].test
-        dedup_alg = test.deduplication_algorithm
-
-        if dedup_alg == settings.DEDUPE_ALGO_HASH_CODE:
-            logger.debug(f"deduplicating finding batch with DEDUPE_ALGO_HASH_CODE - {len(findings)} findings")
-            return _dedupe_batch_hash_code(findings)
-        if dedup_alg == settings.DEDUPE_ALGO_UNIQUE_ID_FROM_TOOL:
-            logger.debug(f"deduplicating finding batch with DEDUPE_ALGO_UNIQUE_ID_FROM_TOOL - {len(findings)} findings")
-            return _dedupe_batch_unique_id(findings)
-        if dedup_alg == settings.DEDUPE_ALGO_UNIQUE_ID_FROM_TOOL_OR_HASH_CODE:
-            logger.debug(f"deduplicating finding batch with DEDUPE_ALGO_UNIQUE_ID_FROM_TOOL_OR_HASH_CODE - {len(findings)} findings")
-            return _dedupe_batch_uid_or_hash(findings)
-        logger.debug(f"deduplicating finding batch with LEGACY - {len(findings)} findings")
-        return _dedupe_batch_legacy(findings)
+        strategy = get_deduplication_strategy(test.deduplication_algorithm)
+        logger.debug(f"deduplicating finding batch with {strategy.name} - {len(findings)} findings")
+        return strategy.dedupe_batch(findings)
     deduplicationLogger.debug("dedupe: skipping dedupe because it's disabled in system settings get()")
     return []
 
