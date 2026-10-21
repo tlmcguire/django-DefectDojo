@@ -5,6 +5,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+from rest_framework.authtoken.serializers import AuthTokenSerializer
 
 from dojo.models import Dojo_User, UserContactInfo
 from dojo.user.utils import get_configuration_permissions_codenames
@@ -236,3 +237,17 @@ class AddUserSerializer(serializers.ModelSerializer):
 class UserProfileSerializer(serializers.Serializer):
     user = UserSerializer(many=False)
     user_contact_info = UserContactInfoSerializer(many=False, required=False)
+
+
+class ResetAwareAuthTokenSerializer(AuthTokenSerializer):
+
+    """Refuse to hand out an API token while the account has a forced password reset pending."""
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        # Runs only after the credentials checked out, so it reveals nothing to a caller
+        # without the password. A pending reset means that password may be compromised.
+        if Dojo_User.force_password_reset(attrs["user"]):
+            msg = "A password reset is required before an API token can be issued."
+            raise serializers.ValidationError(msg, code="authorization")
+        return attrs

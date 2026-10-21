@@ -9,7 +9,7 @@ from unittests.dojo_test_case import versioned_fixtures
 @versioned_fixtures
 class TestForcedPasswordResetRevokesApiToken(TestCase):
 
-    """A completed forced password reset must invalidate API tokens issued before it."""
+    """API tokens must not survive, or be issued during, a forced password reset."""
 
     fixtures = ["dojo_testdata.json"]
 
@@ -51,3 +51,19 @@ class TestForcedPasswordResetRevokesApiToken(TestCase):
 
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(Token.objects.filter(key=token.key).exists())
+
+    def test_token_endpoint_refuses_while_reset_pending(self):
+        user = self._make_user("pending-reset-token-user", forced=True)
+
+        resp = Client().post(reverse("api-token-auth"), {"username": user.username, "password": "OldPass123!@#"})
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(Token.objects.filter(user=user).exists())
+
+    def test_token_endpoint_issues_token_without_pending_reset(self):
+        user = self._make_user("no-reset-token-user", forced=False)
+
+        resp = Client().post(reverse("api-token-auth"), {"username": user.username, "password": "OldPass123!@#"})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["token"], Token.objects.get(user=user).key)

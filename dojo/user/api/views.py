@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema_view
 from rest_framework import status
+from rest_framework.authtoken.views import ObtainAuthToken
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.generics import GenericAPIView
@@ -16,6 +17,7 @@ from dojo.authorization import api_permissions as permissions
 from dojo.models import UserContactInfo
 from dojo.user.api.filters import ApiUserContactInfoFilter, ApiUserFilter
 from dojo.user.api.serializer import (
+    ResetAwareAuthTokenSerializer,
     UserContactInfoSerializer,
     UserProfileSerializer,
     UserSerializer,
@@ -105,3 +107,8 @@ class UserProfileView(GenericAPIView):
             many=False,
         )
         return Response(serializer.data)
+
+
+# Authorization: anonymous (credentials in the request body)
+class ResetAwareObtainAuthToken(ObtainAuthToken):
+    serializer_class = ResetAwareAuthTokenSerializer
