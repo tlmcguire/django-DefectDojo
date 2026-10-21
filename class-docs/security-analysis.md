@@ -2,11 +2,15 @@
 
 CSCI 360: Software Architecture, Security, and Testing | Fall 2026 - Tyler McGuire
 
-Code claims below cite files and line numbers read in this repository at version 3.2.300 (`__version__` in `dojo/__init__.py:7`). Every advisory cited was opened and read through the GitHub API (`gh api repos/.../security-advisories/<id>` or `gh api advisories/<id>`), and each has its link. The AI Use Log is at the bottom.
+Code claims below cite files and line numbers read in this repository at version 3.2.300 (`__version__` in `dojo/__init__.py:7`). Line numbers in Parts 2-6 refer to the baseline before any A5 change, commit [`7f68dc9`](https://github.com/tlmcguire/django-DefectDojo/tree/7f68dc98892000bf89356aea12859e042e0091b3); Parts 2-6 describe the project as found, and Part 7 says what this fork has since fixed. Every advisory cited was opened and read through the GitHub API (`gh api repos/.../security-advisories/<id>` or `gh api advisories/<id>`), and each has its link. The AI Use Log is at the bottom.
 
 **Commits**
 
 - Code control: [`6b5ef59`](https://github.com/tlmcguire/django-DefectDojo/commit/6b5ef59a6de24a5ad9004ad1f545f96f1292d2d1) - `A5-Fix: Revoke API token when a forced password reset completes in change_password view`
+- Additional fixes (Part 7b, one commit each):
+  - [`0fe4b16`](https://github.com/tlmcguire/django-DefectDojo/commit/0fe4b1670) - `Refuse API token issuance while a forced password reset is pending`
+  - [`69461c5`](https://github.com/tlmcguire/django-DefectDojo/commit/69461c535) - `Compare the JIRA webhook secret in constant time`
+  - [`971f2ee`](https://github.com/tlmcguire/django-DefectDojo/commit/971f2eeb2) - `Reject image attachments whose content does not match their extension`
 - Documentation: `A5: Add security analysis and misuse cases` (this page, diagrams, SBOM)
 
 **Sources committed in [`class-docs/`](https://github.com/tlmcguire/django-DefectDojo/blob/coursework/a8-design-patterns/class-docs)** (this fork keeps course material there because `/docs` is DefectDojo's own Hugo site): `misuse-case-diagram.puml`, `trust-boundary-diagram.mmd`, `sbom.json`.
@@ -15,17 +19,19 @@ Code claims below cite files and line numbers read in this repository at version
 
 ## Part 1: Misuse Case Diagram
 
-Source: [`class-docs/misuse-case-diagram.puml`](https://github.com/tlmcguire/django-DefectDojo/blob/coursework/a8-design-patterns/class-docs/misuse-case-diagram.puml) (extends `use-case-diagram.puml` from A1b). PlantUML was not installed here, so this diagram is **not rendered**; the source was checked by reading only.
+Source: [`class-docs/misuse-case-diagram.puml`](https://github.com/tlmcguire/django-DefectDojo/blob/coursework/a8-design-patterns/class-docs/misuse-case-diagram.puml) (extends `use-case-diagram.puml` from A1b), rendered to [`misuse-case-diagram.png`](https://github.com/tlmcguire/django-DefectDojo/blob/coursework/a8-design-patterns/class-docs/misuse-case-diagram.png) with the PlantUML server.
 
-Five misuse cases (dark), two attackers outside the boundary, three controls:
+![Misuse case diagram](https://github.com/tlmcguire/django-DefectDojo/raw/coursework/a8-design-patterns/class-docs/misuse-case-diagram.png)
+
+Five misuse cases (dark), two attackers outside the boundary, four controls (green):
 
 | Misuse case | Threatens | Mitigated by |
 |---|---|---|
-| Retain Access After Forced Password Reset | Authenticate / Use API Token | Revoke API token on forced reset (the A5-Fix, Part 7) |
+| Retain Access After Forced Password Reset | Authenticate / Use API Token | Revoke API token on forced reset (the A5-Fix, Part 7) and no token while a reset is pending (Part 7b) |
 | Read Another Product's Data | Triage a Finding, Accept Risk | Per-object authorization (`dojo/authorization`) |
 | Abuse Stored Integration Credentials | Import Scan Results | Per-object authorization (same layer) |
-| Upload Malicious Attachment | Import Scan Results | none today (see Part 3, crossing 15) |
-| Forge JIRA Webhook | Triage a Finding | Webhook secret in URL path (`dojo/jira/views.py`) |
+| Upload Malicious Attachment | Import Scan Results | Verify image content matches extension (`dojo/file_uploads/validators.py`, added in Part 7b; none in upstream) |
+| Forge JIRA Webhook | Triage a Finding | Webhook secret in URL path (`dojo/jira/views.py`), compared in constant time since Part 7b |
 
 ---
 
@@ -54,7 +60,7 @@ Five misuse cases (dark), two attackers outside the boundary, three controls:
 
 - Step 1: rate limiting on the token endpoint. It is wrapped in `dojo_ratelimit` but that decorator only blocks when `DD_RATE_LIMITER_BLOCK` is true, and it is off by default (`settings.dist.py:244`).
 - Step 5/6: revoke the token when the reset completes. This is the control implemented in Part 7. Before it, nothing at step 5 touched the token.
-- Step 3: refuse to issue a token while a reset is pending (not implemented; see Part 7 "does not fix").
+- Step 3: refuse to issue a token while a reset is pending (implemented in Part 7b, commit `0fe4b16`).
 
 **Consequence.** The attacker keeps the victim's full API permissions (read and write findings, import scans, depending on the victim's role) after the victim believes the account is recovered. The victim and the organisation lose the integrity of the reset as a recovery action. DefectDojo itself rates the same flaw medium (CVSS 3.1 `AV:N/AC:H/PR:L ... C:L/I:L`) in [GHSA-66vh-fm67-46vw](https://github.com/DefectDojo/django-DefectDojo/security/advisories/GHSA-66vh-fm67-46vw).
 
@@ -79,8 +85,8 @@ Five misuse cases (dark), two attackers outside the boundary, three controls:
 
 **Intervention points.**
 
-- Step 2: verify content, not name (compare magic bytes to the claimed extension; reject files that fail). Belongs in `FileUpload.clean()`.
-- Step 5: decode inside a limited, separate process (a Celery task with resource limits) and restrict Pillow to the expected formats with `Image.open(..., formats=[...])`.
+- Step 2: verify content, not name (compare magic bytes to the claimed extension; reject files that fail). Belongs in `FileUpload.clean()`. Implemented in Part 7b, commit `971f2ee`, which also re-checks at step 5 for files stored before the fix.
+- Step 5 (not implemented): decode inside a limited, separate process (a Celery task with resource limits) and restrict Pillow to the expected formats with `Image.open(..., formats=[...])`.
 - Dependency level: upgrade Pillow to 13.0.0 or later.
 
 **Consequence.** Per the advisory, fragments of server process heap, including pointer values, are returned as image pixels; a slightly different file crashes the worker. The system loses confidentiality of whatever sits in that process's memory and some availability. I did **not** build or run an exploit; this chain is reasoned from the code and the advisory text, and whether the leaked bytes would contain anything valuable is not established.
@@ -160,22 +166,22 @@ flowchart LR
 | # | Crossing | What is validated, and by which component |
 |---|---|---|
 | 1 | Anonymous -> login form | Django `LoginView` checks credentials. Throttling via `dojo_ratelimit`, but it only blocks if `DD_RATE_LIMITER_BLOCK` is true (default off, `settings.dist.py:244`); `request.limited` is set (`decorators.py:156`) but nothing else in `dojo/` reads it. **Effectively unthrottled by default.** |
-| 2 | Anonymous -> `/api/v2/api-token-auth/` | Credentials checked by DRF `obtain_auth_token`. Same default-off rate limit (`urls.py:218`). **Does not check `force_password_reset`.** |
+| 2 | Anonymous -> `/api/v2/api-token-auth/` | Credentials checked by DRF `obtain_auth_token`. Same default-off rate limit (`urls.py:218`). **Does not check `force_password_reset`.** (Fixed here in Part 7b.) |
 | 3 | Anonymous -> `password_reset/`, `finding/image/<token>` | Login-exempt by regex list (`settings.dist.py:541-553`). Image route validated only by `FileAccessToken` lookup, deleted on use (`finding/ui/views.py`). |
 | 4 | Browser session -> app | Django session + CSRF middleware. Cookie `Secure` flags default **false** (`settings.dist.py:61,65`), so TLS must be enforced by deployment. |
 | 5 | API client -> `/api/v2/` | DRF authenticators (session, basic, token), `DjangoModelPermissions`, then per-object checks in `dojo/authorization`. **API tokens have no expiry.** |
 | 6 | nginx -> uwsgi | nginx caps body at 800 MB (`nginx/nginx.conf:14`) and hides its version. Django validates `Host` via `ALLOWED_HOSTS` (`settings.dist.py:345`). |
 | 7 | Scan upload -> app | Extension allow-list `DD_FILE_IMPORT_TYPES` (`dojo/validators.py:107`). No content check beyond what the chosen parser does. |
 | 8 | App -> parser | Each of ~250 parsers owns its own parsing safety. Project convention is `defusedxml`; a spot check found direct `lxml`/`xml.etree` imports in `fortify/fpr_parser.py`, `burp_suite_dast/parser.py`, `sonarqube/soprasteria_helper.py` which I did **not** audit for XXE. |
-| 9 | Attachment upload -> app | `FileUpload.clean()` checks filename suffix only (`file_uploads/models.py:66`). **Content is not validated.** |
+| 9 | Attachment upload -> app | `FileUpload.clean()` checks filename suffix only (`file_uploads/models.py:66`). **Content is not validated.** (PNG/JPEG/GIF signatures now checked, Part 7b.) |
 | 10 | App -> PostgreSQL | Django ORM parameterises queries. Authorization is applied by queryset filters, not by the database. TLS to the DB is not configured by default (not verified beyond `DD_DATABASE_URL`). |
 | 11-12 | App -> broker -> worker | `CELERY_ACCEPT_CONTENT = ["json"]` (`settings.dist.py:929`) rules out pickle. The compose default broker is `redis://valkey:6379/0` with no password (`docker-compose.yml:52`), so protection is network isolation only. |
 | 13 | Worker -> PostgreSQL | Same as 10. |
 | 14 | App -> media storage | Names randomised by `UniqueUploadNameProvider`; reads go through `protected_serve`, which loads the `FileUpload`, finds its parent object and calls `user_has_permission_or_403` (`dojo/views.py:118-130`). |
-| 15 | Media -> Pillow decode | **Nothing validates content.** Pillow picks the decoder from file bytes. See the trust finding below. |
+| 15 | Media -> Pillow decode | **Nothing validates content.** Pillow picks the decoder from file bytes. See the trust finding below. (Signature re-checked before decode since Part 7b.) |
 | 16 | Worker -> JIRA | Credentials from `Tool_Configuration`, encrypted with a key derived from `DD_CREDENTIAL_AES_256_KEY`. Server certificate validation is the HTTP library's default. |
 | 17 | Worker -> notification webhooks | `Notification_Webhooks.url` is a plain `URLField`; the request is sent with `requests.request(url=...)` (`notifications/helper.py:552`) with no private-address filter. Creation is restricted to superusers (`notifications/ui/views.py:34`), which limits but does not remove the SSRF exposure. |
-| 18 | JIRA -> `/jira/webhook/<secret>` | Unauthenticated route. Validated by: JIRA integration and webhook enabled, secret in the URL path compared with `!=` (not constant-time) against the system setting, `application/json`, JSON parse, event whitelist (`dojo/jira/views.py:54-100`). The secret check can be switched off (`disable_jira_webhook_secret`). |
+| 18 | JIRA -> `/jira/webhook/<secret>` | Unauthenticated route. Validated by: JIRA integration and webhook enabled, secret in the URL path compared with `!=` (not constant-time; `hmac.compare_digest` since Part 7b) against the system setting, `application/json`, JSON parse, event whitelist (`dojo/jira/views.py:54-100`). The secret check can be switched off (`disable_jira_webhook_secret`). |
 | 19 | IdP -> SAML/OAuth callback | Delegated to the third-party auth libraries. Not audited by me. |
 | 20 | Registries -> build | Python pins use `==` without hashes; GitHub Actions are pinned to commit SHAs (`release-2-tag-docker-push.yml:22`); base image pinned by digest (`Dockerfile.django-debian:8`). |
 | 21 | CI -> Docker Hub | No signing or attestation step (Part 6). |
@@ -341,14 +347,84 @@ Ran 37 tests in 5.702s
 OK
 ```
 
-Without the fix, the new test failed (`AssertionError: True is not false`, token still present); with it, it passes. `ruff check --config ruff.toml` passed on both changed files. I did **not** run the whole suite, the integration tests, or a Docker image build.
+Without the fix, the new test failed (`AssertionError: True is not false`, token still present); with it, it passes. `ruff check --config ruff.toml` passed on both changed files. After all four fixes (Part 7 and 7b), I ran the wider set of suites that touch users, tokens, the REST API, uploads and the JIRA webhook, serially (the parallel runner cannot pickle `test_rest_framework` on macOS):
+
+```
+python manage.py test unittests.test_forced_password_reset_revokes_api_token \
+  unittests.test_file_upload_content_validation unittests.test_file_upload_titles \
+  unittests.test_jira_webhook unittests.test_apiv2_user unittests.test_apiv2_user_delete_authz \
+  unittests.test_apiv2_user_identity_authz unittests.test_user_ui_timestamps \
+  unittests.test_user_ui_identity_authz unittests.test_user_validators unittests.test_user_queries \
+  unittests.test_rest_framework unittests.test_api_scan_configuration_tool_authz \
+  unittests.tools.test_generic_parser --noinput
+Ran 1052 tests in 59.753s
+OK (skipped=377)
+```
+
+The 377 skips come from those suites as written, not from these changes. I did **not** run the entire unit suite, the integration tests, or a Docker image build.
 
 **What it does not fix.**
 
-- The token endpoint still issues tokens **while a reset is pending**, and `TokenAuthentication` ignores `force_password_reset` entirely (the middleware guard at `middleware.py:109` is session-only). Between the moment the flag is set and the moment the reset completes, an attacker holding the old password can still mint and use tokens; only tokens existing at completion are now revoked.
+- On its own, this commit left the token endpoint issuing tokens **while a reset is pending**, and `TokenAuthentication` ignores `force_password_reset` entirely (the middleware guard at `middleware.py:109` is session-only). The repro below shows both (steps 3a and 3b). Issuance is closed by commit `0fe4b16` (Part 7b); an *existing* token still works until the reset completes.
 - Other credential changes (administrator password change, email-link reset via `DojoPasswordResetConfirmView`) do not revoke tokens.
 - Tokens still never expire, and rate limiting is still off by default.
 - The default-key problem (`DD_CREDENTIAL_AES_256_KEY` = `"."`, public compose default) is untouched. I considered failing startup on that default but `Dockerfile.nginx-alpine:67` runs `collectstatic` with no key set, so the change would have broken the image build and needed more than one commit.
+
+---
+
+### End-to-end verification of the issue and the fix
+
+Beyond the unit test, I drove the real HTTP endpoints with Django's test client against a local PostgreSQL. The steps were: an attacker mints a token with the victim's password; an administrator sets the forced-reset flag; the victim's browser is redirected and completes the reset; the attacker retries. The same script ran on the baseline code and on the fixed code (it was a throwaway file, not committed):
+
+| Step | Baseline `7f68dc9` | After `6b5ef59` |
+|---|---|---|
+| [1] attacker `POST /api/v2/api-token-auth/` with the password | 200 | 200 |
+| [2] token works before any reset | 200 | 200 |
+| [3a] old token while the reset is pending | 200 | 200 |
+| [3b] new token issued while the reset is pending | 200 | 200 (400 after `0fe4b16`) |
+| [4] victim's browser redirected | 302 `/change_password` | 302 `/change_password` |
+| [5] victim completes reset, flag cleared | 302 | 302 |
+| **[6] old token after the reset** | **200: attacker keeps access (the vulnerability)** | **403: token revoked** |
+| [7] old password at the token endpoint | 400 | 400 |
+
+Step 6 is the vulnerability and the fix. Steps 3a and 3b are the gaps listed under "does not fix".
+
+---
+
+## Part 7b: Additional Fixes
+
+After the analysis, I fixed three more findings from Parts 2-4, each as its own commit with tests. For each, the new tests were run without the change (red) and with it (green).
+
+### 1. No API token while a forced reset is pending - [`0fe4b16`](https://github.com/tlmcguire/django-DefectDojo/commit/0fe4b1670)
+
+- **Closes:** the remaining half of Misuse Case A (step 3 / repro step 3b), Risk 1; crossing 2. Matches the second half of upstream's fix description in GHSA-66vh-fm67-46vw.
+- **Change:** `ResetAwareAuthTokenSerializer` (`dojo/user/api/serializer.py`) extends DRF's `AuthTokenSerializer`; its `validate()` raises a validation error when `Dojo_User.force_password_reset(user)` is true. `ResetAwareObtainAuthToken` (`dojo/user/api/views.py`) uses it, and `dojo/urls.py` routes `api-token-auth` to it, keeping the existing `dojo_ratelimit` wrapper.
+- **Why there:** the check runs after DRF has verified the credentials, so it tells nothing to a caller who lacks the password. It is also the only view that mints tokens from a password.
+- **Tests:** `unittests/test_forced_password_reset_revokes_api_token.py` (now 4 tests). Without the change, `test_token_endpoint_refuses_while_reset_pending` fails; with it, all pass.
+- **Does not fix:** an existing token still authenticates while the reset is pending (repro step 3a); tokens still have no expiry.
+
+### 2. Constant-time JIRA webhook secret check - [`69461c5`](https://github.com/tlmcguire/django-DefectDojo/commit/69461c535)
+
+- **Closes (partly):** the "Forge JIRA Webhook" misuse case; crossing 18.
+- **Change:** `dojo/jira/views.py` compares the path secret with `hmac.compare_digest` on UTF-8 bytes instead of `!=`. A missing secret is still rejected.
+- **Why there:** it is the only place the secret is checked.
+- **Tests:** two added to `unittests/test_jira_webhook.py`: one checks that the comparison goes through `compare_digest`, the other that a non-ASCII secret is rejected without error. Without the change the first fails; the existing 23 webhook tests still pass.
+- **Honest severity:** low. A remote timing attack on a short Python string compare is hard to carry out. The larger weaknesses are unchanged: the secret travels in the URL (and therefore in proxy logs), and an administrator can disable the check.
+
+### 3. Image attachments must contain what their extension claims - [`971f2ee`](https://github.com/tlmcguire/django-DefectDojo/commit/971f2eeb2)
+
+- **Closes:** Misuse Case B, Risk 3; crossings 9 and 15; the "trusts something it should verify" finding in Part 3.
+- **Change:** a new `dojo/file_uploads/validators.py` with `image_content_matches_name()`, which checks the leading bytes for `.png`, `.jpg`/`.jpeg` and `.gif` and restores the read position. `FileUpload.clean()` (`dojo/file_uploads/models.py`) rejects a mismatch. `download_finding_pic` (`dojo/finding/ui/views.py`) re-checks before handing the file to Pillow, so files stored before this change cannot reach the decoder either.
+- **Why there:** `clean()` is the choke point every attachment path already goes through: UI forms via `full_clean`, the API via `FileSerializer.validate` (`file_uploads/api/serializer.py:16`), and the generic parser (`tools/generic/json_parser.py:213`). The view check covers data at rest, which no upload-time check can.
+- **Tests:** `unittests/test_file_upload_content_validation.py` (8 tests: the helper, `clean()`, the API upload endpoint, and the image view). Without the change, 3 fail. One of those failures shows the baseline image view handing a TIFF named `.png` straight to `PIL.Image.open`, which is the reachable path claimed in Part 6.
+- **Does not fix:** Pillow itself is still 12.3.0; a malicious *real* PNG or JPEG still reaches Pillow's decoders, so the upgrade to Pillow 13.0.0 is still needed. Image types an operator adds to `DD_FILE_UPLOAD_TYPES` beyond these four are not checked. Non-image attachments are not content-checked.
+
+### Not fixed, and why
+
+- **Pillow 12.3.0 -> 13.0.0:** a major-version bump that needs the full suite and an image build, which I could not run here.
+- **Default secrets** (`DD_CREDENTIAL_AES_256_KEY = "."`, the public compose defaults): failing on them breaks the nginx image build (`Dockerfile.nginx-alpine:67`) and the documented quick start; it needs a coordinated change.
+- **Outbound webhook SSRF** (crossing 17): limited to superusers today; a private-address filter must also handle DNS rebinding and redirects, so it is not a one-commit change.
+- **Rate limiting off by default:** turning it on is a deployment default change, not a code fix.
 
 ---
 
@@ -357,7 +433,7 @@ Without the fix, the new test failed (`AssertionError: True is not false`, token
 1. **Diagram and misuse case:** show the misuse diagram; walk Misuse Case A (token survives the reset), steps 1, 5, 6.
 2. **First mitigation:** tie token lifetime to credential state in `Dojo_User` (`dojo/user/models.py`), not in each view.
 3. **Dependency risk:** Pillow CVE-2026-112404 is reachable via `download_finding_pic`; the DRF and GeoDjango advisories are in the tree but not reachable.
-4. **Control:** open `6b5ef59`; it defends crossing 5.
+4. **Control:** open `6b5ef59`; it defends crossing 5. Show the end-to-end table: step 6 goes from 200 to 403.
 
 ---
 
@@ -372,14 +448,16 @@ Without the fix, the new test failed (`AssertionError: True is not false`, token
 3. Listed upstream advisories with `gh api` and read the full text of every advisory cited above.
 4. Built a virtualenv, generated the SBOM with `cyclonedx-py` and `cdxgen`, ran `pip-audit` and an OSV query.
 5. Implemented the control with a test, confirmed the test fails without the fix, committed it; then wrote this page and the two diagram sources.
+6. Re-validated: reproduced the attack end to end through the real endpoints on the baseline and fixed code, and re-checked every `file:line` citation in Parts 2-6 against commit `7f68dc9`.
+7. Looked for more fixable findings in this analysis and fixed three (Part 7b), each with tests run red then green.
 
 **Honest limits, not smoothed over:**
 
-- **Not run:** Docker, `run-unittest.sh`, the integration suite, or the full test suite. Only 37 related tests ran, against a temporary local PostgreSQL.
-- **Diagrams not rendered.** PlantUML was not installed; the Mermaid source was not rendered. Both were checked by reading.
+- **Not run:** Docker, `run-unittest.sh`, the integration suite, or the entire unit suite. 1052 tests in the related suites ran and passed (377 skipped) against a temporary local PostgreSQL.
+- **Diagram rendering.** The misuse case diagram was rendered to PNG through the public PlantUML server (no local Java), and I looked at the image. The trust boundary diagram is Mermaid embedded in the page; its render was checked on GitHub, not locally.
 - **Syft and osv-scanner were not used** (brew install failed); equivalent tools were. The SBOM is a merge of two tool outputs.
-- **The Pillow reachability chain is traced by reading code and the advisory, not exploited.**
+- **The Pillow vulnerability was not exploited.** The Part 7b test shows a mislabelled TIFF reaching `PIL.Image.open` in the baseline image view, which confirms the path. I did not build a file that triggers the memory read.
 - **Fix PR contents (#15445, #15650, #15954)** were read as file lists only, not diffs.
 - **Some claims are unverified:** XXE safety of the direct `lxml`/`xml.etree` parsers, whether pushed images already carry default BuildKit provenance, TLS to the database, and the PyJWT call paths.
-- The advisory dates and numbers in this simulated timeline come straight from the GitHub API at the time of writing; re-check them before class.
+- The advisory dates and numbers come straight from the GitHub API at the time of writing; re-check them before class.
 - The analysis and code were written by the AI and need my review. The assignment says I will be asked in class why the control sits in `change_password` rather than the model; I should be able to answer that from Part 7 before I present.

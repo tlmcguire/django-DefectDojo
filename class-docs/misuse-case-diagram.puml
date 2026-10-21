@@ -1,58 +1,63 @@
 @startuml
 ' Misuse case diagram for the Security Analysis assignment (A5).
 ' Extends use-case-diagram.puml (A1b). Misuse cases are drawn inverted (dark fill);
-' the attacker sits outside the system boundary.
+' the attackers sit outside the system boundary, on the right.
 left to right direction
 skinparam packageStyle rectangle
 skinparam usecase {
   BackgroundColor<<misuse>> #3a3a3a
   FontColor<<misuse>> white
   BorderColor<<misuse>> #b00020
+  BackgroundColor<<control>> #e6f4ea
+  BorderColor<<control>> #1e7d32
 }
 
 actor "AppSec Engineer\n(primary)" as engineer
 actor "JIRA\n(supporting)" as jira
-actor "Authenticated Attacker\n(low-privilege member,\nor holder of a stolen password)" as attacker
-actor "Anonymous Attacker\n(network, no account)" as anon
 
 rectangle "DefectDojo" {
-  usecase "Import Scan Results" as UC1
+  usecase "Authenticate / Use API Token" as UC4
   usecase "Triage a Finding" as UC2
   usecase "Accept Risk for a Finding" as UC3
-  usecase "Authenticate / Use API Token" as UC4
+  usecase "Import Scan Results" as UC1
+
+  usecase "Revoke API token on forced reset (A5-Fix);\nno token while reset pending" as C1 <<control>>
+  usecase "Per-object authorization\n(dojo/authorization)" as C2 <<control>>
+  usecase "Webhook secret in URL path\n(constant-time compare)" as C3 <<control>>
+  usecase "Verify image content matches\nextension (file_uploads/validators.py)" as C4 <<control>>
 
   usecase "Retain Access After\nForced Password Reset" as MC1 <<misuse>>
   usecase "Read Another Product's Data" as MC2 <<misuse>>
   usecase "Abuse Stored Integration\nCredentials" as MC3 <<misuse>>
   usecase "Upload Malicious Attachment\n(parser exploit / memory disclosure)" as MC4 <<misuse>>
   usecase "Forge JIRA Webhook" as MC5 <<misuse>>
-
-  usecase "Revoke API token on\nforced reset (A5-Fix)" as C1
-  usecase "Per-object authorization\n(dojo/authorization)" as C2
-  usecase "Webhook secret in URL path" as C3
 }
 
-engineer --> UC1
+actor "Authenticated Attacker\n(low-privilege member,\nor holder of a stolen password)" as attacker
+actor "Anonymous Attacker\n(network, no account)" as anon
+
+engineer --> UC4
 engineer --> UC2
 engineer --> UC3
-engineer --> UC4
+engineer --> UC1
 UC2 ..> jira : <<uses>>
 
-attacker --> MC1
-attacker --> MC2
-attacker --> MC3
-attacker --> MC4
-anon --> MC5
+MC1 <-- attacker
+MC2 <-- attacker
+MC3 <-- attacker
+MC4 <-- attacker
+MC5 <-- anon
 
-MC1 ..> UC4 : <<threatens>>
-MC2 ..> UC2 : <<threatens>>
-MC2 ..> UC3 : <<threatens>>
-MC3 ..> UC1 : <<threatens>>
-MC4 ..> UC1 : <<threatens>>
-MC5 ..> UC2 : <<threatens>>
+UC4 <.. MC1 : <<threatens>>
+UC2 <.. MC2 : <<threatens>>
+UC3 <.. MC2 : <<threatens>>
+UC1 <.. MC3 : <<threatens>>
+UC1 <.. MC4 : <<threatens>>
+UC2 <.. MC5 : <<threatens>>
 
 C1 ..> MC1 : <<mitigates>>
 C2 ..> MC2 : <<mitigates>>
 C2 ..> MC3 : <<mitigates>>
 C3 ..> MC5 : <<mitigates>>
+C4 ..> MC4 : <<mitigates>>
 @enduml
