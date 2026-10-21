@@ -2,20 +2,20 @@
 
 CSCI 360: Software Architecture, Security, and Testing | Fall 2026 - Tyler McGuire
 
-Prepared with Claude Code (Anthropic), run inside the local clone of this fork. Code claims below cite files and line numbers read in this repository at version 3.2.300 (`__version__` in `dojo/__init__.py:7`). Every advisory cited was opened and read through the GitHub API (`gh api repos/.../security-advisories/<id>` or `gh api advisories/<id>`), and each has its link. Full disclosure is in the AI Use Log at the bottom.
+Code claims below cite files and line numbers read in this repository at version 3.2.300 (`__version__` in `dojo/__init__.py:7`). Every advisory cited was opened and read through the GitHub API (`gh api repos/.../security-advisories/<id>` or `gh api advisories/<id>`), and each has its link. The AI Use Log is at the bottom.
 
 **Commits**
 
 - Code control: [`6b5ef59`](https://github.com/tlmcguire/django-DefectDojo/commit/6b5ef59a6de24a5ad9004ad1f545f96f1292d2d1) - `A5-Fix: Revoke API token when a forced password reset completes in change_password view`
 - Documentation: `A5: Add security analysis and misuse cases` (this page, diagrams, SBOM)
 
-**Sources committed in [`class-docs/`](../class-docs)** (this fork keeps course material there because `/docs` is DefectDojo's own Hugo site): `misuse-case-diagram.puml`, `trust-boundary-diagram.mmd`, `sbom.json`.
+**Sources committed in [`class-docs/`](https://github.com/tlmcguire/django-DefectDojo/blob/coursework/a8-design-patterns/class-docs)** (this fork keeps course material there because `/docs` is DefectDojo's own Hugo site): `misuse-case-diagram.puml`, `trust-boundary-diagram.mmd`, `sbom.json`.
 
 ---
 
 ## Part 1: Misuse Case Diagram
 
-Source: `class-docs/misuse-case-diagram.puml` (extends `use-case-diagram.puml` from A1b). PlantUML was not installed here, so this diagram is **not rendered**; the source was checked by reading only.
+Source: [`class-docs/misuse-case-diagram.puml`](https://github.com/tlmcguire/django-DefectDojo/blob/coursework/a8-design-patterns/class-docs/misuse-case-diagram.puml) (extends `use-case-diagram.puml` from A1b). PlantUML was not installed here, so this diagram is **not rendered**; the source was checked by reading only.
 
 Five misuse cases (dark), two attackers outside the boundary, three controls:
 
@@ -89,7 +89,71 @@ Five misuse cases (dark), two attackers outside the boundary, three controls:
 
 ## Part 3: Trust Boundary Diagram
 
-Source: `class-docs/trust-boundary-diagram.mmd` (Mermaid flowchart; written to the grammar, **not rendered** here). Six zones: untrusted internet, edge (nginx), application, data stores, third-party services, and build/release. Each numbered arrow is a boundary crossing.
+Source: [`class-docs/trust-boundary-diagram.mmd`](https://github.com/tlmcguire/django-DefectDojo/blob/coursework/a8-design-patterns/class-docs/trust-boundary-diagram.mmd) (Mermaid flowchart; **not previewed** by me before publishing, check it renders on the wiki). Six zones: untrusted internet, edge (nginx), application, data stores, third-party services, and build/release. Each numbered arrow is a boundary crossing.
+
+```mermaid
+flowchart LR
+    subgraph Untrusted["ZONE 0: Untrusted (internet)"]
+        Anon["Anonymous client"]
+        Browser["Authenticated browser"]
+        APIClient["API client / CI job<br/>(API token)"]
+        Scanner["Scan report + attachment<br/>(attacker-influenced bytes)"]
+    end
+
+    subgraph ThirdParty["ZONE 4: Third-party services"]
+        JIRA["JIRA"]
+        Notify["Slack / Teams / webhook URLs"]
+        IdP["SAML / OAuth IdP"]
+    end
+
+    subgraph Edge["ZONE 1: Edge"]
+        Nginx["nginx<br/>nginx/nginx.conf"]
+    end
+
+    subgraph App["ZONE 2: Application (trusted code)"]
+        MW["Middleware + auth<br/>dojo/middleware.py"]
+        Views["UI views + DRF API<br/>dojo/*/ui, dojo/*/api"]
+        Authz["dojo/authorization"]
+        Parsers["Parsers<br/>dojo/tools/*"]
+        Worker["Celery worker + beat"]
+    end
+
+    subgraph Data["ZONE 3: Data stores"]
+        PG[("PostgreSQL")]
+        Broker[("Valkey / Redis broker")]
+        Media[("Media filesystem<br/>uploads")]
+    end
+
+    subgraph Supply["ZONE 5: Build and release"]
+        Registries["PyPI / npm / base images"]
+        CI["GitHub Actions"]
+        Hub["Docker Hub release images"]
+    end
+
+    Anon -->|"1 login form"| Nginx
+    Anon -->|"2 api-token-auth"| Nginx
+    Anon -->|"3 password_reset, finding/image token"| Nginx
+    Browser -->|"4 session requests"| Nginx
+    APIClient -->|"5 API v2 requests"| Nginx
+    Nginx -->|"6 uwsgi socket"| MW
+    MW --> Views
+    Views --> Authz
+    Scanner -->|"7 scan upload"| Views
+    Views -->|"8 parse"| Parsers
+    Scanner -->|"9 attachment upload"| Views
+    Views -->|"10 ORM"| PG
+    Views -->|"11 enqueue task"| Broker
+    Broker -->|"12 dequeue"| Worker
+    Worker -->|"13 ORM"| PG
+    Views -->|"14 write file"| Media
+    Media -->|"15 Pillow decode on view"| Views
+    Worker -->|"16 outbound HTTP"| JIRA
+    Worker -->|"17 outbound HTTP"| Notify
+    JIRA -->|"18 inbound webhook"| Nginx
+    IdP -->|"19 SAML / OAuth response"| Nginx
+    Registries -->|"20 dependencies"| CI
+    CI -->|"21 publish images"| Hub
+```
 
 ### Crossings, what is validated, and by whom
 
@@ -180,7 +244,7 @@ DefectDojo publishes GitHub security advisories; I listed them with `gh api repo
 
 ### SBOM
 
-`class-docs/sbom.json`, CycloneDX 1.6, generated by tools, not by hand:
+[`class-docs/sbom.json`](https://github.com/tlmcguire/django-DefectDojo/blob/coursework/a8-design-patterns/class-docs/sbom.json), CycloneDX 1.6, generated by tools, not by hand:
 
 - Python: `cyclonedx-py environment` (cyclonedx-bom 7.5.0) over a clean virtualenv installed from `requirements.txt` (without `uWSGI`, which needs a compiler toolchain). The venv's own `pip` is removed from the list.
 - JavaScript: `@cyclonedx/cdxgen` over `components/` (`yarn.lock`).
