@@ -248,9 +248,16 @@ def change_password(request):
         if form.is_valid():
             new_password = form.cleaned_data["new_password"]
 
+            # A forced reset means the old password may be known to someone else (admin
+            # flag or brute-force lockout). Any API token minted with it must not outlive
+            # the reset, or the old credential keeps working through the API.
+            was_forced_reset = Dojo_User.force_password_reset(user)
+
             user.set_password(new_password)
             user.disable_force_password_reset()
             user.save()
+            if was_forced_reset:
+                Token.objects.filter(user=user).delete()
             # Case: user is logged in and changes their password via the profile UI.
             # We stamp password_last_reset here so this flow is tracked independently from
             # the "forgot password" reset flow (handled in DojoPasswordResetConfirmView).
