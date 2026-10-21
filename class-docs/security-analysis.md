@@ -2,6 +2,8 @@
 
 CSCI 360: Software Architecture, Security, and Testing | Fall 2026 - Tyler McGuire
 
+> **What this page is.** [DefectDojo](https://github.com/DefectDojo/django-DefectDojo) is an open-source web application (Python/Django) that security teams use to collect and track vulnerabilities: they upload reports from scanning tools, and DefectDojo turns them into "findings" to triage, assign and fix. Because it stores sensitive data (every known weakness in an organisation's software) and holds credentials for other systems like JIRA, it is a valuable target. This page analyses DefectDojo's own security: how it could be attacked (Parts 1-2), where untrusted data enters (Part 3), the biggest risks (Part 4), real bugs it has had (Part 5), and the risk in the third-party code it depends on (Part 6). It then fixes some of what was found (Parts 7 and 7b).
+
 Code claims below cite files and line numbers read in this repository at version 3.2.300 (`__version__` in `dojo/__init__.py:7`). Line numbers in Parts 2-6 refer to the baseline before any A5 change, commit [`7f68dc9`](https://github.com/tlmcguire/django-DefectDojo/tree/7f68dc98892000bf89356aea12859e042e0091b3); Parts 2-6 describe the project as found, and Part 7 says what this fork has since fixed. Every advisory cited was opened and read through the GitHub API (`gh api repos/.../security-advisories/<id>` or `gh api advisories/<id>`), and each has its link. The AI Use Log is at the bottom.
 
 **Commits**
@@ -18,6 +20,8 @@ Code claims below cite files and line numbers read in this repository at version
 ---
 
 ## Part 1: Misuse Case Diagram
+
+> **In plain terms.** A normal *use case* diagram shows what legitimate users do with a system: an engineer imports scan results, triages a finding, accepts a risk. A *misuse case* diagram adds the opposite view: what an attacker wants to do to that same system. Misuse cases are drawn in a dark colour so they stand out. Each one points at the normal use case it *threatens*; for example, stealing API access threatens "Authenticate / Use API Token". Green ovals are *controls*, the defences, and each points at the misuse case it *mitigates*. Attackers stand outside the box because they are not part of the system. The value of the diagram is that it makes you ask, for every feature, "how could someone abuse this?", and shows at a glance which threats have a defence and which do not.
 
 Source: [`class-docs/misuse-case-diagram.puml`](https://github.com/tlmcguire/django-DefectDojo/blob/coursework/a8-design-patterns/class-docs/misuse-case-diagram.puml) (extends `use-case-diagram.puml` from A1b), rendered to [`misuse-case-diagram.png`](https://github.com/tlmcguire/django-DefectDojo/blob/coursework/a8-design-patterns/class-docs/misuse-case-diagram.png) with the PlantUML server.
 
@@ -36,6 +40,8 @@ Five misuse cases (dark), two attackers outside the boundary, four controls (gre
 ---
 
 ## Part 2: Two Fully-Dressed Misuse Cases
+
+> **In plain terms.** A "fully-dressed" use case is the detailed, numbered, step-by-step version of a use case: who the actor is, what must be true before it starts, and each step in order. Here we write two of them from the attacker's side. Writing an attack as numbered steps has a practical payoff: each step is a place where the system *could* have stopped the attacker. Those are the *intervention points*, and they tell you exactly where a defence would go. Case A is about a stolen password whose API token keeps working after the password is reset. Case B is about uploading a booby-trapped image file that tricks the image library into leaking server memory.
 
 ### Misuse Case A: Retain Access After Forced Password Reset
 
@@ -94,6 +100,8 @@ Five misuse cases (dark), two attackers outside the boundary, four controls (gre
 ---
 
 ## Part 3: Trust Boundary Diagram
+
+> **In plain terms.** A *trust boundary* is any line where data passes from something you trust less to something you trust more: from a stranger's browser into your server, from your server into the database, from a third-party service into your webhook. Attacks happen at these crossings, because that is where untrusted input first touches trusted code. The diagram groups the system into *zones* (internet, web server, application, databases, outside services, build pipeline) and numbers every arrow that crosses between zones. Together, the numbered arrows are the *attack surface*. The table then asks one question per arrow: **what checks this data, and which component does the checking?** Where the answer is "nothing", that is a finding. A common mistake is drawing one big box around the whole app; real systems have many boundaries, such as background workers, webhooks and the CI pipeline.
 
 Source: [`class-docs/trust-boundary-diagram.mmd`](https://github.com/tlmcguire/django-DefectDojo/blob/coursework/a8-design-patterns/class-docs/trust-boundary-diagram.mmd) (Mermaid flowchart, rendered by GitHub; use the expand button on the diagram to zoom). Six zones: untrusted internet, edge (nginx), application, data stores, third-party services, and build/release. Each numbered arrow is a boundary crossing.
 
@@ -199,6 +207,8 @@ flowchart TB
 
 ## Part 4: Threat Model
 
+> **In plain terms.** A threat model picks the risks that matter most and describes each one in a standard vocabulary, so they can be compared and prioritised. For each risk: the *asset* is what is worth protecting (a token, data, a running process). **STRIDE** names the kind of attack: **S**poofing (pretending to be someone), **T**ampering (changing data), **R**epudiation (denying you did something), **I**nformation disclosure (leaking data), **D**enial of service (making it stop working), **E**levation of privilege (gaining powers you shouldn't have). The **OWASP Top 10** is a widely used list of the most common web application weakness categories, such as A01 "Broken Access Control". *Likelihood* is how probable the attack is, and *impact* is how bad it would be. The mitigation names the exact file or layer where the fix belongs, because "sanitise input" means little until you say which component owns that job.
+
 ### Risk 1: API token outlives credential recovery
 
 - **Asset:** a user's API token (a bearer credential).
@@ -227,6 +237,8 @@ flowchart TB
 
 ## Part 5: Security Bug History
 
+> **In plain terms.** Real projects publish their security bugs once they are fixed, usually as *advisories* with an ID such as `GHSA-xxxx-xxxx-xxxx` (GitHub Security Advisory) or `CVE-YYYY-NNNN` (the industry-wide catalogue). Studying past bugs shows which *kinds* of mistakes a codebase tends to make. The key question is the **root cause**: not "which line was wrong", but "what about the design let this happen?". The second question is whether the fix was **narrow** (patch the one spot that was reported) or **structural** (change the design so the whole class of bug cannot happen again). Issue 1 below is a useful example: the first, narrow fix missed some code paths, the bug came back as a second advisory, and only then was the check moved into one shared place.
+
 DefectDojo publishes GitHub security advisories; I listed them with `gh api repos/DefectDojo/django-DefectDojo/security-advisories`.
 
 ### Issue 1: stored integration credentials usable across products - [GHSA-mq99-2cr2-xww9](https://github.com/DefectDojo/django-DefectDojo/security/advisories/GHSA-mq99-2cr2-xww9), follow-up [GHSA-v43c-xr7j-vh82](https://github.com/DefectDojo/django-DefectDojo/security/advisories/GHSA-v43c-xr7j-vh82)
@@ -247,6 +259,8 @@ DefectDojo publishes GitHub security advisories; I listed them with `gh api repo
 ---
 
 ## Part 6: Supply Chain and Dependency Analysis
+
+> **In plain terms.** Most of the code a project ships was written by someone else: the libraries it installs, and the libraries *those* libraries install. That whole tree is the *software supply chain*, and a bug anywhere in it is your bug too. An **SBOM** (Software Bill of Materials) is an ingredients list of every package and version in the build, generated by a tool in a standard format (CycloneDX here). With that list, scanners can match each package against public vulnerability databases. Matching is only the first step, though. A vulnerable package is only dangerous if your code actually **reaches** the vulnerable feature, so for each finding we trace whether there is a call path from our code into it. Finally, *provenance* asks whether someone downloading a release can prove it was really built from the source code it claims to be built from, usually with cryptographic signatures or build attestations.
 
 ### SBOM
 
@@ -301,6 +315,8 @@ Add keyless Sigstore signing and a build-provenance attestation to the release w
 ---
 
 ## Part 7: Implement One Control
+
+> **In plain terms.** This part turns analysis into a code change. A *control* is a specific defence. The one chosen here closes Misuse Case A. DefectDojo has two ways to log in: a browser session that uses your password, and an **API token**, a long random string that scripts and CI jobs send instead of a password. When an administrator forces a user to reset a password (usually because it may have been stolen), the browser side respects that, but the API token used to keep working, so an attacker who had already grabbed a token kept access. The fix deletes the token at the moment the forced reset completes. The section shows the code before and after, says why the fix lives in that function, proves it with tests that fail without the fix and pass with it, and is honest about what it does *not* fix.
 
 **Control.** Revoke the user's API token when a forced password reset completes, in the `change_password` view. Commit [`6b5ef59`](https://github.com/tlmcguire/django-DefectDojo/commit/6b5ef59a6de24a5ad9004ad1f545f96f1292d2d1).
 
@@ -393,6 +409,8 @@ Step 6 is the vulnerability and the fix. Steps 3a and 3b are the gaps listed und
 
 ## Part 7b: Additional Fixes
 
+> **In plain terms.** Three more fixes for problems found during the analysis, each small and tested on its own. (1) Don't hand out a *new* API token while a password reset is pending, because the password may be in an attacker's hands. (2) Check the JIRA webhook's secret with a *constant-time* comparison. A normal string comparison stops at the first wrong character, so in theory an attacker could measure response times to guess the secret one character at a time; a constant-time comparison always takes the same time. (3) Check that an uploaded "image" really is the image type its name claims. Each format starts with known *magic bytes*: every PNG starts with `\x89PNG`, every JPEG with `\xff\xd8\xff`. The image library ignores the file name and trusts those bytes, so a malicious TIFF renamed to `photo.png` used to slip through. Each fix also lists what it still leaves open.
+
 After the analysis, I fixed three more findings from Parts 2-4, each as its own commit with tests. For each, the new tests were run without the change (red) and with it (green).
 
 ### 1. No API token while a forced reset is pending - [`0fe4b16`](https://github.com/tlmcguire/django-DefectDojo/commit/0fe4b1670)
@@ -430,6 +448,8 @@ After the analysis, I fixed three more findings from Parts 2-4, each as its own 
 
 ## Part 8: Present in Class (talking points)
 
+> **In plain terms.** A two-minute walkthrough for class: one misuse case, the most important fix and where it lives, one dependency risk and whether our code can actually reach it, and the control that was implemented.
+
 1. **Diagram and misuse case:** show the misuse diagram; walk Misuse Case A (token survives the reset), steps 1, 5, 6.
 2. **First mitigation:** tie token lifetime to credential state in `Dojo_User` (`dojo/user/models.py`), not in each view.
 3. **Dependency risk:** Pillow CVE-2026-112404 is reachable via `download_finding_pic`; the DRF and GeoDjango advisories are in the tree but not reachable.
@@ -438,6 +458,8 @@ After the analysis, I fixed three more findings from Parts 2-4, each as its own 
 ---
 
 ## AI Use Log
+
+> **In plain terms.** A record of how an AI assistant was used for this assignment: what it was asked to do, what it did, and, just as important, what was *not* verified. AI tools can invent convincing details such as CVE numbers, version ranges or line numbers, so this log says which claims were checked against the real code and the real advisory databases, and which were not.
 
 **Tool:** Claude Code (Anthropic), run in this clone at `/Users/tyler/Projects/django-DefectDojo` on branch `coursework/a8-design-patterns` (cut from `master`; the repo's `AGENTS.md` flags `master` for release work only, and this is coursework in my fork, not a patch for upstream).
 
