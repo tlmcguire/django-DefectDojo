@@ -95,10 +95,10 @@ Five misuse cases (dark), two attackers outside the boundary, four controls (gre
 
 ## Part 3: Trust Boundary Diagram
 
-Source: [`class-docs/trust-boundary-diagram.mmd`](https://github.com/tlmcguire/django-DefectDojo/blob/coursework/a8-design-patterns/class-docs/trust-boundary-diagram.mmd) (Mermaid flowchart; **not previewed** by me before publishing, check it renders on the wiki). Six zones: untrusted internet, edge (nginx), application, data stores, third-party services, and build/release. Each numbered arrow is a boundary crossing.
+Source: [`class-docs/trust-boundary-diagram.mmd`](https://github.com/tlmcguire/django-DefectDojo/blob/coursework/a8-design-patterns/class-docs/trust-boundary-diagram.mmd) (Mermaid flowchart, rendered by GitHub; use the expand button on the diagram to zoom). Six zones: untrusted internet, edge (nginx), application, data stores, third-party services, and build/release. Each numbered arrow is a boundary crossing.
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph Untrusted["ZONE 0: Untrusted (internet)"]
         Anon["Anonymous client"]
         Browser["Authenticated browser"]
