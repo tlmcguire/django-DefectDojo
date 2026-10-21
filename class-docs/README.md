@@ -45,6 +45,11 @@ into the upstream project's docs.
 - `pattern-factory-parsers.mmd`, `pattern-template-method-importer.mmd`,
   `pattern-observer-signals.mmd`, `missing-pattern-strategy-before.mmd`,
   `missing-pattern-strategy-after.mmd` - Mermaid source for the five class diagrams on that page.
+- `security-analysis.md` - source for the "Security Analysis" wiki page (assignment A5): misuse
+  cases, trust boundary crossings, STRIDE/OWASP threat model, security bug history, supply chain
+  analysis, and the A5-Fix control.
+- `misuse-case-diagram.puml`, `trust-boundary-diagram.mmd` - diagram sources for that page.
+- `sbom.json` - CycloneDX 1.6 SBOM (Python + JS, 300 components) generated with `cyclonedx-py` and `cdxgen`.
 - `keynotes/` - slide decks for in-class presentation of each assignment:
   - `Project-Outcome-Analysis.pptx` (assignment A1c)
   - `Build-Demo-and-Applied-Analysis.pptx` (assignment A2), including a native redraw of

@@ -1,0 +1,61 @@
+flowchart LR
+    subgraph Untrusted["ZONE 0: Untrusted (internet)"]
+        Anon["Anonymous client"]
+        Browser["Authenticated browser"]
+        APIClient["API client / CI job<br/>(API token)"]
+        Scanner["Scan report + attachment<br/>(attacker-influenced bytes)"]
+    end
+
+    subgraph ThirdParty["ZONE 4: Third-party services"]
+        JIRA["JIRA"]
+        Notify["Slack / Teams / webhook URLs"]
+        IdP["SAML / OAuth IdP"]
+    end
+
+    subgraph Edge["ZONE 1: Edge"]
+        Nginx["nginx<br/>nginx/nginx.conf"]
+    end
+
+    subgraph App["ZONE 2: Application (trusted code)"]
+        MW["Middleware + auth<br/>dojo/middleware.py"]
+        Views["UI views + DRF API<br/>dojo/*/ui, dojo/*/api"]
+        Authz["dojo/authorization"]
+        Parsers["Parsers<br/>dojo/tools/*"]
+        Worker["Celery worker + beat"]
+    end
+
+    subgraph Data["ZONE 3: Data stores"]
+        PG[("PostgreSQL")]
+        Broker[("Valkey / Redis broker")]
+        Media[("Media filesystem<br/>uploads")]
+    end
+
+    subgraph Supply["ZONE 5: Build and release"]
+        Registries["PyPI / npm / base images"]
+        CI["GitHub Actions"]
+        Hub["Docker Hub release images"]
+    end
+
+    Anon -->|"1 login form"| Nginx
+    Anon -->|"2 api-token-auth"| Nginx
+    Anon -->|"3 password_reset, finding/image token"| Nginx
+    Browser -->|"4 session requests"| Nginx
+    APIClient -->|"5 API v2 requests"| Nginx
+    Nginx -->|"6 uwsgi socket"| MW
+    MW --> Views
+    Views --> Authz
+    Scanner -->|"7 scan upload"| Views
+    Views -->|"8 parse"| Parsers
+    Scanner -->|"9 attachment upload"| Views
+    Views -->|"10 ORM"| PG
+    Views -->|"11 enqueue task"| Broker
+    Broker -->|"12 dequeue"| Worker
+    Worker -->|"13 ORM"| PG
+    Views -->|"14 write file"| Media
+    Media -->|"15 Pillow decode on view"| Views
+    Worker -->|"16 outbound HTTP"| JIRA
+    Worker -->|"17 outbound HTTP"| Notify
+    JIRA -->|"18 inbound webhook"| Nginx
+    IdP -->|"19 SAML / OAuth response"| Nginx
+    Registries -->|"20 dependencies"| CI
+    CI -->|"21 publish images"| Hub
