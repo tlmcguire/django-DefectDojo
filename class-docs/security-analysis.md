@@ -6,7 +6,7 @@ Prepared with Claude Code (Anthropic), run inside the local clone of this fork. 
 
 **Commits**
 
-- Code control: [`3e878dd`](https://github.com/tlmcguire/django-DefectDojo/commit/3e878dd40722991664274f551240733b6ea29e69) - `A5-Fix: Revoke API token when a forced password reset completes in change_password view`
+- Code control: [`6b5ef59`](https://github.com/tlmcguire/django-DefectDojo/commit/6b5ef59a6de24a5ad9004ad1f545f96f1292d2d1) - `A5-Fix: Revoke API token when a forced password reset completes in change_password view`
 - Documentation: `A5: Add security analysis and misuse cases` (this page, diagrams, SBOM)
 
 **Sources committed in [`class-docs/`](../class-docs)** (this fork keeps course material there because `/docs` is DefectDojo's own Hugo site): `misuse-case-diagram.puml`, `trust-boundary-diagram.mmd`, `sbom.json`.
@@ -232,7 +232,7 @@ Add keyless Sigstore signing and a build-provenance attestation to the release w
 
 ## Part 7: Implement One Control
 
-**Control.** Revoke the user's API token when a forced password reset completes, in the `change_password` view. Commit [`3e878dd`](https://github.com/tlmcguire/django-DefectDojo/commit/3e878dd40722991664274f551240733b6ea29e69).
+**Control.** Revoke the user's API token when a forced password reset completes, in the `change_password` view. Commit [`6b5ef59`](https://github.com/tlmcguire/django-DefectDojo/commit/6b5ef59a6de24a5ad9004ad1f545f96f1292d2d1).
 
 **Closes:** Misuse Case A and threat model Risk 1. **Defends:** crossing 5 (API client -> `/api/v2/`), by making a token issued before a reset stop authenticating after it. It is also the follow-through for crossing 2.
 
@@ -293,7 +293,7 @@ Without the fix, the new test failed (`AssertionError: True is not false`, token
 1. **Diagram and misuse case:** show the misuse diagram; walk Misuse Case A (token survives the reset), steps 1, 5, 6.
 2. **First mitigation:** tie token lifetime to credential state in `Dojo_User` (`dojo/user/models.py`), not in each view.
 3. **Dependency risk:** Pillow CVE-2026-112404 is reachable via `download_finding_pic`; the DRF and GeoDjango advisories are in the tree but not reachable.
-4. **Control:** open `3e878dd`; it defends crossing 5.
+4. **Control:** open `6b5ef59`; it defends crossing 5.
 
 ---
 
