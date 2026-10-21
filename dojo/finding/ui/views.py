@@ -33,6 +33,7 @@ import dojo.risk_acceptance.helper as ra_helper
 from dojo.authorization.authorization import user_has_global_permission_or_403, user_has_permission_or_403
 from dojo.celery_dispatch import dojo_dispatch_task
 from dojo.endpoint.queries import get_authorized_endpoints
+from dojo.file_uploads.validators import image_content_matches_name
 from dojo.finding.deduplication import (
     _fetch_fp_candidates_for_batch,
     do_false_positive_history_batch,
@@ -2293,6 +2294,9 @@ def download_finding_pic(request, token):
 
     with Path(access_token.file.file.file.name).open("rb") as file:
         file_name = file.name
+        # Files stored before upload validation checked content can still be mislabelled.
+        if not image_content_matches_name(file, file_name):
+            raise PermissionDenied
         image = size_map[size](source=file).generate()
         response = StreamingHttpResponse(FileIterWrapper(image))
         response["Content-Disposition"] = "inline"

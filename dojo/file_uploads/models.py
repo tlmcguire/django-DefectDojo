@@ -7,6 +7,7 @@ from django.core.files.base import ContentFile
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+from dojo.file_uploads.validators import image_content_matches_name
 from dojo.models import (  # UniqueUploadNameProvider kept in dojo.models for migration upload_to path stability
     UniqueUploadNameProvider,
     copy_model_util,
@@ -76,6 +77,10 @@ class FileUpload(models.Model):
                 msg = (
                     _("File uploads are prohibited due to the list of acceptable file extensions being empty")
                 )
+            raise ValidationError(msg)
+
+        if self.file and not image_content_matches_name(self.file, file_name):
+            msg = _("File content does not match its %s extension.") % Path(file_name).suffix.lower()
             raise ValidationError(msg)
 
 
