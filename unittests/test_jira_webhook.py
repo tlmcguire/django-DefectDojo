@@ -1,7 +1,9 @@
+import hmac
 import json
 
 # from unittest import skip
 import logging
+from unittest.mock import patch
 
 from django.urls import reverse
 
@@ -453,6 +455,18 @@ class JIRAWebhookTest(DojoTestCase):
         response = self.client.post(reverse("jira_web_hook_secret", args=(self.correct_secret, )))
         # 400 due to incorrect content_type
         self.assertEqual(200, response.status_code, response.content[:1000])
+
+    def test_webhook_secret_compared_in_constant_time(self):
+        self.system_settings(enable_jira=True, enable_jira_web_hook=True, disable_jira_webhook_secret=False, jira_webhook_secret=self.correct_secret)
+        with patch("dojo.jira.views.hmac.compare_digest", wraps=hmac.compare_digest) as compare:
+            self.client.post(reverse("jira_web_hook_secret", args=(self.incorrect_secret, )))
+        compare.assert_called_once_with(self.incorrect_secret.encode("utf-8"), self.correct_secret.encode("utf-8"))
+
+    def test_webhook_secret_enabled_non_ascii_secret(self):
+        self.system_settings(enable_jira=True, enable_jira_web_hook=True, disable_jira_webhook_secret=False, jira_webhook_secret=self.correct_secret)
+        response = self.client.post(reverse("jira_web_hook_secret", args=("é12345", )))
+        self.assertEqual(200, response.status_code, response.content[:1000])
+        self.assertIn(b"Invalid or no secret", response.content)
 
     def test_webhook_comment_on_finding(self):
         self.system_settings(enable_jira=True, enable_jira_web_hook=True, disable_jira_webhook_secret=False, jira_webhook_secret=self.correct_secret)

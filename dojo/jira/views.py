@@ -1,5 +1,6 @@
 # Standard library imports
 import datetime
+import hmac
 import json
 import logging
 import re
@@ -79,7 +80,8 @@ def webhook(request, secret=None):
             return webhook_responser_handler("info", "Ignoring incoming webhook as JIRA Webhook secret is empty in Defect Dojo system settings.")
         # Make sure the secret supplied in the path of the webhook request matches the
         # secret supplied in the system settings
-        if secret != system_settings.jira_webhook_secret:
+        # Constant-time comparison so response timing does not leak how much of a guess matched.
+        if secret is None or not hmac.compare_digest(secret.encode("utf-8"), system_settings.jira_webhook_secret.encode("utf-8")):
             return webhook_responser_handler("info", "Invalid or no secret provided to JIRA Webhook")
     # if webhook secret is disabled in system_settings, we ignore the incoming secret, even if it doesn't match
     # example json bodies at the end of this file
