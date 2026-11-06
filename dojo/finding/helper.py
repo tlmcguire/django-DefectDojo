@@ -314,7 +314,7 @@ def get_group_by_group_name(finding, finding_group_by_option):
         group_name = finding.title
     elif finding_group_by_option == "vuln_id_from_tool":
         if finding.vuln_id_from_tool:
-            group_name = f"Vulnerability ID {finding.vuln_id_from_tool}" if finding.vuln_id_from_tool else "None"
+            group_name = f"Vulnerability ID {finding.vuln_id_from_tool}"
     else:
         msg = f"Invalid group_by option {finding_group_by_option}"
         raise ValueError(msg)
@@ -327,7 +327,6 @@ def get_group_by_group_name(finding, finding_group_by_option):
 def group_findings_by(finds, finding_group_by_option):
     grouped = 0
     groups_created = 0
-    groups_existing = 0
     skipped = 0
     affected_groups = set()
     for find in finds:
@@ -348,7 +347,6 @@ def group_findings_by(finds, finding_group_by_option):
             skipped += not_added
         else:
             add_to_finding_group(finding_group, [find])
-            groups_existing += 1
             grouped += 1
 
         affected_groups.add(finding_group)
