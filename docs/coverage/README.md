@@ -6,7 +6,8 @@ DefectDojo ships no coverage tooling, so this directory adds the minimum needed 
 |---|---|
 | `.coveragerc` | coverage.py configuration: **branch coverage on**, `source = dojo`, migrations and settings omitted, subprocess/thread/multiprocessing tracking so Django's parallel test workers are counted |
 | `run-coverage.sh <label>` | Runs the unit suite under coverage in the same three phases as `docker/entrypoint-unit-tests.sh` (parallel, `non-parallel`, `transactional`; `performance` excluded) and writes `<label>/report.txt` |
-| `baseline/report.txt` | Per-file report **before** any A7 change (this commit's parent has no test changes) |
+| `baseline/report.txt` | Per-file report **before** any A7 change |
+| `after/report.txt` | Per-file report after the A7 tests, fix and refactor |
 
 ```bash
 # with a migrated PostgreSQL test database and the DD_* variables from docker-compose.override.unit_tests.yml
@@ -40,3 +41,25 @@ Partly. 72.6% says 72.6% of the code *ran* while the suite ran; it says nothing 
 - The finding-group helpers in `dojo/finding/helper.py` (`group_findings_by` and the functions it calls) have **no executed lines at all**, although grouping is used by the bulk-edit screen and by JIRA grouped pushes.
 
 The line figure is also much higher than the branch figure (76.5% vs 61.1%): a line that ran once is "covered" even if only one side of its `if` was ever taken.
+
+## After A7
+
+Same tool, config and environment as the baseline.
+
+| Measure | Before | After |
+|---|---|---|
+| Lines | 51,202 / 66,907 (76.5%) | 51,273 / 66,905 (76.6%) |
+| Branches | 14,038 / 22,974 (61.1%) | 14,072 / 22,974 (61.3%) |
+| **Combined (reported total)** | **72.6%** | **72.7%** |
+
+The refactor removed two statements, which is why the line total went from 66,907 to 66,905.
+
+| File | Before | After | Missed statements |
+|---|---|---|---|
+| `dojo/finding/helper.py` | 76.9% | 83.6% | 177 to 115 |
+| `dojo/importers/auto_create_context.py` | 90.4% | 98.8% | 9 to 1 |
+| `dojo/importers/base_importer.py` | 80.9% | 81.6% | 81 to 78 |
+
+**What ran:** 5,435 tests (5,383 + 45 + 7), 537 skipped by the suite. One test failed, `test_add_jira_instance_unknown_host`, the same DNS-dependent test that fails at baseline. The two order-dependent failures from the baseline run did not recur.
+
+**What this does and does not say.** The project went up 0.1 percentage points because 86 tests aimed at three components cannot move a 66,907-statement codebase much; the per-file rows are the honest measure. The one line left uncovered in `auto_create_context.py` is the re-check for an engagement created by a concurrent request (`return existing`), which cannot be reached without two racing threads. A higher number would not mean the tests are good: after writing them I checked that by breaking the production code eight different ways and confirming the new tests failed each time. That check is small and manual, not a mutation-testing tool.
