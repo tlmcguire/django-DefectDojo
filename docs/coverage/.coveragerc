@@ -1,0 +1,20 @@
+# coverage.py configuration for the A7 coverage baseline.
+# The project ships no coverage tooling; this file is used with
+#   coverage run --rcfile=docs/coverage/.coveragerc manage.py test unittests ...
+# Branch coverage is on, so the report gives line and branch figures.
+
+[run]
+branch = True
+source = dojo
+omit =
+    dojo/db_migrations/*
+    dojo/settings/*
+    dojo/*/migrations/*
+parallel = True
+concurrency = thread, multiprocessing
+sigterm = True
+
+[report]
+skip_empty = True
+precision = 1
+show_missing = False
