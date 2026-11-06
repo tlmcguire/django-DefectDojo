@@ -155,6 +155,29 @@ class TestGroupFindingsBy(DojoTestCase):
         self.assertEqual(set(), set(groups))
         self.assertEqual({"Hand made group"}, set(Finding_Group.objects.filter(test=self.test).values_list("name", flat=True)))
 
+    def _already_grouped_finding(self):
+        old_group = Finding_Group.objects.create(test=self.test, name="Hand made group", creator=self.user)
+        finding = self.make_finding("already grouped", component_name="openssl")
+        old_group.findings.add(finding)
+        return Finding.objects.get(pk=finding.pk)  # drop the cached finding_group
+
+    def test_groupFindingsBy_whenASkippedFindingComesBeforeOneThatCreatesAGroup_stillCountsTheSkippedFinding(self):
+        # The "skipped" total feeds the bulk-edit message "Skipped N findings ... already in an existing group".
+        skipped_first = self._already_grouped_finding()
+        creates_group = self.make_finding("creates a group", component_name="zlib")
+
+        _, grouped, skipped, created = self.group_findings([skipped_first, creates_group])
+
+        self.assertEqual((1, 1, 1), (grouped, skipped, created))
+
+    def test_groupFindingsBy_whenASkippedFindingComesAfterOneThatCreatesAGroup_countsTheSkippedFinding(self):
+        creates_group = self.make_finding("creates a group", component_name="zlib")
+        skipped_last = self._already_grouped_finding()
+
+        _, grouped, skipped, created = self.group_findings([creates_group, skipped_last])
+
+        self.assertEqual((1, 1, 1), (grouped, skipped, created))
+
     def test_groupFindingsBy_whenGivenNoFindings_returnsZeroCountsEvenForAnInvalidOption(self):
         # the option is only validated when a finding is actually looked at
         groups, grouped, skipped, created = self.group_findings([], option="not-an-option")
