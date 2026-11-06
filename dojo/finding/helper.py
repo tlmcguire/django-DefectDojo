@@ -342,10 +342,10 @@ def group_findings_by(finds, finding_group_by_option):
 
         finding_group = Finding_Group.objects.filter(test=find.test, name=group_name).first()
         if not finding_group:
-            finding_group, added, skipped = create_finding_group([find], group_name)
+            finding_group, added, not_added = create_finding_group([find], group_name)
             groups_created += 1
             grouped += added
-            skipped += skipped
+            skipped += not_added
         else:
             add_to_finding_group(finding_group, [find])
             groups_existing += 1
