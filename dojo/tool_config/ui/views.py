@@ -5,6 +5,7 @@ from django.contrib import messages
 from django.http import HttpResponseRedirect
 from django.shortcuts import render
 from django.urls import reverse
+from django.utils.translation import gettext as _
 
 from dojo.decorators import deprecated_view
 from dojo.tool_config.factory import create_API
@@ -15,7 +16,7 @@ from dojo.utils import add_breadcrumb, dojo_crypto_encrypt
 logger = logging.getLogger(__name__)
 
 
-@deprecated_view("Tool Configuration", removal_version="3.5.0", removal_date="November 2026")
+@deprecated_view("tool_configuration")
 def new_tool_config(request):
     if request.method == "POST":
         tform = ToolConfigForm(request.POST)
@@ -32,7 +33,7 @@ def new_tool_config(request):
                 form_copy.save()
                 messages.add_message(request,
                                      messages.SUCCESS,
-                                     "Tool Configuration successfully updated.",
+                                     _("Tool Configuration successfully updated."),
                                      extra_tags="alert-success")
                 return HttpResponseRedirect(reverse("tool_config"))
             except Exception as e:
@@ -50,7 +51,7 @@ def new_tool_config(request):
                   {"tform": tform})
 
 
-@deprecated_view("Tool Configuration", removal_version="3.5.0", removal_date="November 2026")
+@deprecated_view("tool_configuration")
 def edit_tool_config(request, ttid):
     tool_config = Tool_Configuration.objects.get(pk=ttid)
     # Read before the form binds, which overwrites the instance in place.
@@ -79,7 +80,7 @@ def edit_tool_config(request, ttid):
                 form_copy.save()
                 messages.add_message(request,
                                      messages.SUCCESS,
-                                     "Tool Configuration successfully updated.",
+                                     _("Tool Configuration successfully updated."),
                                      extra_tags="alert-success")
                 return HttpResponseRedirect(reverse("tool_config"))
             except Exception as e:
@@ -99,7 +100,7 @@ def edit_tool_config(request, ttid):
                   })
 
 
-@deprecated_view("Tool Configuration", removal_version="3.5.0", removal_date="November 2026")
+@deprecated_view("tool_configuration")
 def tool_config(request):
     confs = Tool_Configuration.objects.all().order_by("name")
     add_breadcrumb(title="Tool Configuration List", top_level=not len(request.GET), request=request)

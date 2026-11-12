@@ -6,11 +6,11 @@ audience: pro
 aliases:
   - /en/working_with_findings/finding_deduplication/enabling_product_deduplication
 ---
-Deduplication can be applied at an Asset\-wide level, or scoped more narrowly to a single Engagement.
+Deduplication can be applied at an Asset\-wide level, or scoped more narrowly to a single Engagement. To scope it the other way, across a chosen group of Assets, see [Dedupe Pools](/triage_findings/finding_deduplication/pro__dedupe_pools/).
 
 ## Deduplication for Assets
 
-1. Navigate to the System Settings page: **Settings \> System \> ⚙️ System Settings** on the sidebar (**Settings \> Pro Settings \> System Settings** on instances still using the previous menu layout).
+1. Navigate to the System Settings page: **Settings > System > System Settings** on the sidebar.
 
 ![image](images/enabling_product-level_deduplication.png)
 
@@ -20,7 +20,7 @@ Deduplication can be applied at an Asset\-wide level, or scoped more narrowly to
 
 ### Enable Finding Deduplication
 
-**Enable Finding Deduplication** turns on the Deduplication Algorithm for all Findings. Once enabled, Deduplication runs on every subsequent import — DefectDojo compares imported Findings against existing Findings in the destination Asset and marks duplicates according to your configuration.
+**Enable Finding Deduplication** turns on the Deduplication Algorithm for all Findings. Once enabled, Deduplication runs on every subsequent import: DefectDojo compares imported Findings against existing Findings in the destination Asset and marks duplicates according to your configuration.
 
 ### Delete Duplicate Findings
 
@@ -32,7 +32,7 @@ Rather than Deduplicating across an entire Asset, you can scope Deduplication to
 
 ### Open the Engagement form
 
-* **For a new Engagement:** open the **📥 Engagements** sub‑menu on the sidebar and click **\+ New Engagement**.
+* **For a new Engagement:** open **Act > Explore > Engagements** in the sidebar and select **New Engagement**.
 
 ![image](images/enabling_deduplication_within_an_engagement.png)
 
@@ -46,7 +46,7 @@ Rather than Deduplicating across an entire Asset, you can scope Deduplication to
 
 ### Completing the Engagement form
 
-1. On the Engagement form, locate the ☐ **Isolate Deduplication from Other Engagements** checkbox. It appears above the **Optional Fields \+** panel.
+1. On the Engagement form, locate the ☐ **Isolate Deduplication From Other Engagements** checkbox. It appears above the **Optional Fields \+** panel.
 2. Check the box to scope Deduplication to this Engagement.
 3. Submit the form.
 

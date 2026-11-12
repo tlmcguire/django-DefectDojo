@@ -50,11 +50,13 @@ Optional Asset metadata includes:
 - **Business criticality**
 - **User records** (i.e., the estimated number of user records in the Asset)
 - **Revenue**
-- **Personnel information** (e.g., Asset Manager, Team Manager, Technical Contact, etc.)
+- **Personnel information** (e.g., Asset Manager, Team Manager, Technical Contact, etc.). Only active users can be assigned to these fields, in the UI and over the API. If a user is deactivated later, the assignment stays in place as a historical reference and continues to be readable, but that user cannot be assigned again until the account is reactivated. An update that re-sends the value already stored is still accepted.
 - **Regulations** (e.g., HIPAA, GLBA, OPPA, etc.)
 - **Platform** (e.g., API, Desktop, IoT, Mobile, Web, etc.)
 - **Lifecycle** (e.g., Construction, Production, Retirement, etc.)
 - **Origin** (e.g., Third-Party Library, Purchased, Open Source, etc.)
+
+To send notifications to somebody who does not have an active DefectDojo account, use a Rules Engine 2 rule with an **Email** node instead. The node sends to any address named in its Email connection's recipients field, and the recipient needs no DefectDojo account at all. The personnel fields grant no notification rights of their own.
 
 This metadata improves filtering, reporting, and prioritization across your security program, but most importantly, Assets also contain all of the Engagements, Tests, and Findings related to the testing efforts surrounding that Asset. All Findings from Tests ultimately roll up to the Asset level, enabling long-term tracking, trend analysis, and reporting.
 
@@ -62,7 +64,7 @@ Beyond these built-in fields, an administrator can define typed **Custom Fields*
 
 ## Accessing Assets 
 
-Assets are accessible via the sidebar. The submenu provides access to the [Asset Hierarchy](/asset_modelling/engagements_tests/pro__assets/#asset-nesting) and All Assets, as well as the option to create a new Asset.
+Assets are accessible from the sidebar under **Act > Explore > Assets**. The submenu provides access to the [Asset Hierarchy](/asset_modelling/engagements_tests/pro__assets/#asset-nesting) (**Hierarchy**) and the full Asset list (**All**); new Assets are created with the **New Asset** button at the top of the list.
 
 ![image](images/assets_ss1.png)
 
@@ -78,8 +80,15 @@ For more information on user roles, see our [Introduction To Roles](/admin/user_
 
 Asset views contain a variety of tables and charts to interpret an Asset’s status at a glance. This includes: 
 
+- **Count cards**
+    - A row of cards at the top of the page for Engagements, Tests, Findings, and Endpoints (or Locations, when Locations are enabled). Each card shows its total, and its menu opens the matching list or import. Under each total, a footer shows what makes up that count, with one figure for what needs attention. Hover over or focus a figure to see what it counts. The figure that needs attention turns amber or red when it is above zero.
+    - **Engagements**: open, closed, and overdue (open with an end date that has passed).
+    - **Tests**: when the Asset was last scanned (the most recent update to any of its Tests), the imports and reimports in the last 30 days, and the Findings created in the last 30 days.
+    - **Findings**: direct and indirect Findings (see [Direct and indirect vulnerabilities](/asset_modelling/pro_hierarchy/asset_hierarchy/#direct-and-indirect-vulnerabilities)), and the active Findings past their SLA.
+    - **Endpoints**: vulnerable (an open Finding still affects it), not vulnerable (everything else, including Endpoints no Finding has touched), and those still affected by an active Critical Finding. With Locations enabled, the card counts active, mitigated, and critical Locations instead.
+    - Every figure counts only what you have permission to view.
 - **Open Finding Severity**
-    - A list of open Findings within the Asset, grouped by severity
+    - One bar of the Asset's open Findings split by severity, with each severity's count and share underneath. The panel header shows the total open count, and each severity links to the Asset's open Findings at that severity.
 - **Asset Overview**
     - A breakdown of various features of the Asset, including Description, Components, Contacts, [User Groups](/admin/user_management/create_user_group/
 ), Members, Technologies, and Regulations.
@@ -89,9 +98,10 @@ Asset views contain a variety of tables and charts to interpret an Asset’s sta
 - **Service Level Agreement by Severity**
     - Applies the Asset’s SLA configuration from settings to the Findings within the Asset. 
 - **Finding Severity Breakdown**
-    - A graph of the Findings within the Asset, organized by severity. 
+    - A ring of the Asset's open Findings (active, and not duplicates, false positives or out of scope) by severity, with the open total in the middle. Beside it, each severity's count and share, each linking to the Asset's open Findings at that severity. The panel header shows the total open count.
 - **Finding Distribution**
-    - A breakdown of the Findings within the Asset, organized by status (e.g., Active, Mitigated, Static, and Dynamic)
+    - A ring of the Asset's Findings by status: Active, Mitigated, and Other (Findings that are neither active nor mitigated, such as false positives and accepted risks). The three add up to the total, which the panel header shows, and each status in the legend links to the Asset's Findings with that status.
+    - Beside the ring, the share of Findings reported by static and by dynamic tools. Each is measured against the total on its own, because a Finding can be both static and dynamic, or neither.
 - **All Engagements**
     - A list of Engagements contained within the Asset. 
 
@@ -99,10 +109,7 @@ Asset views contain a variety of tables and charts to interpret an Asset’s sta
 
 ### Create Assets 
 
-There are two ways to create Assets: 
-
-- From the **New Asset** option in the side menu
-- From the **New Asset** button at the top of the All Assets list 
+Assets are created from the **New Asset** button at the top of the All Assets list (**Act > Explore > Assets > All**). 
 
 ## Edit Assets 
 
@@ -110,7 +117,33 @@ Assets can be edited by clicking **Edit Asset** from within the gear menu at the
 
 All ensuing fields that can be edited are also available when the Asset is being created.
 
+Changing the Organization field moves the Asset, along with its Engagements, Tests, Findings and any child Assets, to the selected Organization. Before saving that change, DefectDojo asks you to confirm the move and names both the current and the new Organization. [You can reorganize later](/asset_modelling/pro_hierarchy/reorganize_later/) lists everything a move changes.
+
 ![image](images/assets_ss2.png)
+
+### Change a Field in Place
+
+A few fields can also be changed on the Asset page itself, without opening Edit Asset: the **Name** and **Tags** in the page header, and **Business Criticality**, **Platform**, **Lifecycle** and **Description** wherever the page layout shows them. Click a highlighted value to open a small editor under it. **Enter**, or clicking anywhere else, keeps the change (marked **Unsaved**) and **Esc** puts the value back; change as many fields as you like, then **Save Changes** in the card at the bottom of the page saves them all at once.
+
+* **Business Criticality**, **Platform** and **Lifecycle** can be cleared as well as changed. Platform and Lifecycle offer the options configured under [Editable Platform, Lifecycle and Origin Lists](/asset_modelling/pro__asset_attribute_options/).
+* If someone else changed the Asset after you opened the page, nothing is overwritten: DefectDojo shows **Asset Changed** and offers **Reload** or **Keep Editing**.
+
+Only users who can edit the Asset (a Maintainer or above on it, or its Organization) can open a value. Form Configuration's hidden and required settings apply in place, and the **Inline Editing** feature flag turns it all off. See [Change a Field in Place](/triage_findings/findings_workflows/editing_findings/#change-a-field-in-place) for the rules every page shares.
+
+### Bulk Edit Assets
+
+Several Assets can be edited in one action from the All Assets list. Select the Assets using the checkboxes on the left of the list, then click **Bulk Edit** in the bar that appears above the table.
+
+The Bulk Edit form applies any combination of the following to every selected Asset:
+
+- **Organization**: moves the selected Assets to a different Organization. You need permission to add Assets to the destination Organization. Unless the move goes through a change plan review first, DefectDojo asks you to confirm it before saving.
+- **SLA Configuration**
+- **Prioritization Engine**
+- **Tags**: added on top of each Asset's existing tags — nothing is removed.
+
+Leave a field empty to keep each Asset's current value. Assets you don't have edit permission for are skipped and counted in the result, as are Assets whose Findings are still being recalculated from an earlier SLA Configuration or Prioritization Engine change.
+
+![image](images/assets_bulk_edit.png)
 
 ### Export the Asset Inventory
 
@@ -186,21 +219,60 @@ Because Findings inherit risk, priority, and ownership from their parent Asset, 
 
 Importantly, Assets are also the primary determining factor in a Finding’s SLA characteristics. Therefore, the SLA of a Findings depends on the SLA configuration of its parent Asset. More information about SLA configurations can be found [here](/asset_modelling/pro_hierarchy/priority_sla/#working-with-slas).
 
-## Asset Kinds
+## Asset Types
 
-An Asset can declare what kind of thing it is: a repository, a service, a host, a domain, a
-container image, a package, a cloud account, a device, or a branch. The kind is optional —
+An Asset can declare what sort of thing it is: a repository, a service, a host, a domain, a
+container image, a package, a cloud account, a device, or a branch. The type is optional —
 an Asset without one behaves exactly as it always has — and it is descriptive rather than
 functional: it does not change permissions, deduplication, SLAs, or reporting scope. What it
 does is make a long Asset list readable, by giving each Asset an icon and a label that says
 what you are looking at.
 
-The list of kinds is data, not a fixed set. The kinds DefectDojo ships are marked as system
-kinds and cannot be deleted, but their wording and icons can be changed, and you can add your
-own kinds for anything your inventory contains that the shipped list does not cover.
+The list of types is data, not a fixed set. The types DefectDojo ships are marked as system
+types and cannot be deleted, but their wording and icons can be changed, and you can add your
+own types for anything your inventory contains that the shipped list does not cover.
 
-Kinds are available on the Asset itself and through the API at `/api/v2/asset_kinds/`
-(read-only) and as the `kind` field on `/api/v2/assets/`.
+Set an Asset's type with the **Type** field on the Asset's add and edit forms; leave it empty to
+leave the Asset unclassified. Once set, the type appears as a badge with its icon beside the
+Asset's name at the top of the Asset page, and as an icon in front of each node's name in the
+**Asset Hierarchy** view — where it tells you at a glance whether you are looking at a
+repository, the service built from it, or the host it runs on. The hierarchy view's field picker
+(the eye control, top left) can also show the type's label under each node's name.
+
+### Types Set by Connectors and Rules
+
+Connectors that know what an Asset is set its type for you, on mapping and on every Sync:
+
+| Connector | Type |
+|---|---|
+| CrowdStrike Falcon, Palo Alto Cortex XDR, Wazuh, Censys, Shodan | Host |
+| GitHub, GitHub Advanced Security, GitLab, Bitbucket, Azure DevOps | Repository |
+| NeuVector, Quay | Container Image |
+| Orca Security | Cloud Account |
+| Have I Been Pwned | Domain |
+| Qualys | Host, for the default one-record-per-host grouping (a record grouped by tag is left unclassified) |
+| runZero | From the asset's type: machines are hosts, network gear and IoT are devices, anything else is a host |
+| ServiceNow CMDB | From the CI class: servers and computers are hosts, applications and services are services, network gear is a device |
+| CyCognito | IPs are hosts, domains are domains, web apps are services |
+| Jit | Repositories, APIs (services) and cloud accounts |
+| JSM Assets | From the object type's name, for the common names (Server, Application, Business Service, ...) |
+| Backstage | From the Component's type: `service` and `website` are services, `library` is a package |
+| Deepfence ThreatMapper | Hosts, container images and cloud accounts |
+
+A connector never overwrites a type a person chose. It fills in an Asset that has no type, and
+it keeps the type it set up to date when the source system reclassifies the item. Once someone
+sets a different type (on the Asset form, through the API, in a bulk edit, or with a rule), the
+connector leaves that Asset's type alone. When records from several connectors, or several
+records from one connector, map onto the same Asset, the first one to classify it keeps it and
+the others leave it alone. If the record that classified an Asset is later removed, the type stays
+as it is; change it on the Asset form to reclassify. A vendor value DefectDojo has no type for (a
+CyCognito certificate, a custom CI class) leaves the Asset unclassified.
+
+To classify Assets no connector types, use the Triage Engine's **Set a Field** node on Assets
+with the **Type** field. It can set any type, including ones you added.
+
+Asset types are available through the API at `/api/v2/asset_types/` (read-only) and as the
+`asset_type` field on `/api/v2/assets/` and `/api/v2/products/`.
 
 ## Asset Identity: Aliases
 
@@ -211,7 +283,7 @@ recognise the Asset from whichever name a source happens to use.
 
 Each alias has three parts:
 
-- a **namespace**, naming the system that issued the identifier — `dns`, `oci`, `purl`, `git`,
+- a **namespace**, naming the system that issued the identifier: `dns`, `oci`, `purl`, `git`, `hw`, `cloud`,
 or a specific Connector configuration;
 - a **type**, saying what kind of identifier it is — `external_id`, `hostname`, `image_digest`,
 and so on;
@@ -232,14 +304,212 @@ Connector-issued aliases are written by Connector sync rather than by hand, so t
 writes to a `connector:` namespace. Everything else is yours to declare, through
 `/api/v2/asset_aliases/`.
 
-Aliases require `DD_V3_ASSET_ALIASES` to be enabled before they can be created; existing ones
-stay readable whether it is on or off.
+### Managing aliases from the Asset page
+
+The **Asset Identity** card on the Asset page lists every identifier that resolves to that
+Asset, with its type, its namespace, and where it came from: a Connector's name for the ones
+its sync asserted, or *User* for the ones you added. The namespace appears once the card is wide
+enough for it. Above the list, the card counts the identifiers and how many of them people
+added, and the card's title shows the same count (or the number of repository conflicts, when
+there are any). A long identifier is cut to fit the card: hover over it, or move keyboard focus
+to it, to read it in full.
+
+Use **Add Identity** to declare one. You pick the namespace first, then the type, because only
+some pairings mean anything: a hostname belongs in `dns`, an image digest in `oci`. The
+namespaces offered are the shared, semantic ones; a Connector's own namespace is not offered,
+because those belong to its sync.
+
+Removing an alias **withdraws** it rather than editing it: choose **Withdraw** from the menu at
+the start of its row. Withdrawing one you added means sources that knew the Asset by that
+identifier fall back to matching it by name. Withdrawing one a Connector asserted only lasts
+until that Connector's next sync, which will assert it again. To stop a Connector claiming an
+Asset, change its mapping rather than its aliases.
+
+Adding and withdrawing an alias requires edit permission on the Asset. Without it, the card
+lists the identifiers with no **Add Identity** button and no row menus.
+
+### Device identifiers
+
+Two namespaces identify a machine rather than software:
+
+- **Hardware** (`hw`): a **MAC Address**, a **Hardware UUID** (the SMBIOS UUID) or a **Serial
+  Number**. These stay with one machine for its life.
+- **Cloud** (`cloud`): a **Cloud Instance ID**, written with its provider, for example
+  `aws:i-0abc1234def567890`, `azure:<VM id>` or `gcp:<instance id>`.
+
+DefectDojo stores each in one spelling, so `00-1B-A9-12-34-56` and `00:1b:a9:12:34:56` are the
+same address. It refuses values that cannot identify one machine: randomized and locally
+administered MAC addresses, the MAC addresses of virtual machines and of USB or dock network
+adapters, and the placeholder UUIDs and serial numbers firmware leaves when nobody set one.
+
+Connectors that report one machine per Record (for example CrowdStrike Falcon, Qualys, runZero,
+Wazuh and ServiceNow CMDB) also record the IP addresses and host names they see for each
+machine. These are kept as observations, with when each source first and last saw them, rather
+than as aliases: an IP address can move to another machine, so it is evidence for matching two
+Assets, never an identifier on its own.
+
+### Turning Asset Identity on and off
+
+Aliases are controlled by the **Asset Identity** feature on the
+[Feature Flags](/admin/feature_flags/pro__feature_flags/) page. It is off by default. A self-hosted
+install can turn it on by default by setting `DD_ASSET_IDENTITY_DEFAULT_ON=True`, and a choice made on
+the Feature Flags page still wins. While it is off, Connectors map
+Records by name alone, you cannot add or withdraw aliases, and the Asset Identity card and the
+**Type** field are hidden. Existing aliases stay readable through the API either way.
+
+Turning it on changes nothing about Records that are already mapped. Each Connector records its
+own identifier for a Record whenever that Record's Mapping is created or changed, whether the
+feature is on or not, so a Record you remapped by hand while it was off stays on the Asset you
+chose once it is on. A change takes effect without a restart.
+
+To go back to matching by name, turn **Asset Identity** off, or run
+`python manage.py set_feature asset_aliases False` in a DefectDojo container. The aliases are
+kept, so turning it on again later is just as safe.
+
+Earlier releases switched this with the `DD_V3_ASSET_ALIASES` deployment setting. An instance
+that had it set to `True` keeps the feature on; otherwise the setting has no effect, apart from
+standing in for the stored value when DefectDojo starts without its database.
+
+### Container image repositories (the `oci` namespace)
+
+A container image repository is often reported by more than one tool: a cloud security service
+sees it in your cloud account, a registry scanner sees it in the registry, a runtime agent sees
+it where it runs. Each tool names it its own way, so matching by name would give you one Asset
+per tool. Connectors that describe a repository therefore also report the repository reference
+itself, and DefectDojo records it as a **Repository** alias in the shared `oci` namespace. Every
+Connector that reports the same repository resolves to the Asset that alias names, so the
+repository ends up as one Asset with every tool's Findings on it.
+
+Repository references are compared in one normalized form, `<registry-host>/<repository-path>`,
+whichever spelling a tool used:
+
+| Reported as | Recorded as |
+| --- | --- |
+| `https://GHCR.io/Acme/API:1.4.2` | `ghcr.io/acme/api` |
+| `nginx`, `nginx:1.25`, `index.docker.io/library/nginx` | `docker.io/library/nginx` |
+| `bitnami/redis:7` | `docker.io/bitnami/redis` |
+| `registry.example.com:443/team/app@sha256:...` | `registry.example.com/team/app` |
+| `registry.example.com:5000/team/app` | `registry.example.com:5000/team/app` |
+| `arn:aws:ecr:us-east-1:123456789012:repository/payments` | `123456789012.dkr.ecr.us-east-1.amazonaws.com/payments` |
+
+Tags, digests, schemes and default ports are dropped, the registry host and path are lowercased,
+and Docker Hub is always `docker.io`, with official images under `library/`. A value that is not
+a valid repository reference is ignored, and that Record is matched as if it carried none.
+
+You can declare a repository yourself from **Add Identity**: choose the **OCI Registry**
+namespace and the **Repository** type. What you type is normalized the same way, so
+`https://Docker.io/nginx:1.25` is saved as `docker.io/library/nginx`. A repository you declare
+is user-asserted, so it wins over anything a Connector would otherwise decide: every Connector
+that reports that repository maps its Record to your Asset.
+
+#### When two sources disagree
+
+A Record that a Connector has already mapped stays where it is. If such a Record starts
+reporting a repository whose alias names a different Asset, or if you map a Record by hand to a
+different Asset than its repository's alias names, DefectDojo does not move the Record or its
+Findings, and does not re-point the alias. It records a **repository conflict** instead.
+
+When there are conflicts, a strip at the top of the Asset Identity card says how many, on both
+Assets involved, and the identifier a conflict names is marked at the start of its row. Select
+**Review** on the strip to list them: each names the repository, the Record and its Connector,
+and the two Assets. (If you cannot view the other Asset, the list says so without naming it.)
+To settle one, either:
+
+- remap the Record onto the Asset the repository resolves to, choosing **Move** so its Findings
+travel with it (see [Managing Records](/connectors/upstream/manage_records/)); or
+- withdraw the repository alias, and declare it on the right Asset if the old one was wrong.
+
+The conflict disappears as soon as the two agree; there is nothing to clear by hand.
+
+#### Backfilling repository aliases
+
+Assets mapped before repository identity existed have no `oci` aliases yet. The
+`backfill_oci_aliases` management command reads the repository reference on every mapped
+Connector Record and reports what it would do, without changing anything:
+
+```
+python manage.py backfill_oci_aliases            # dry run: report only
+python manage.py backfill_oci_aliases --apply    # record the aliases
+```
+
+For each repository it finds:
+
+- **one Asset**: the alias is recorded for that Asset (with `--apply`);
+- **two or more Assets**: reported as a repository those Assets share, and nothing is recorded.
+Recording one would decide which Asset the others belong to, which is a merge, and merging is
+left to you: remap the Records onto one Asset with **Move**;
+- **an existing alias**: Records on other Assets are reported as conflicts, exactly as the Asset
+Identity card shows them.
+
+`--connector-config <id>` limits the run to one Connector configuration, and `--json` prints
+the report as JSON. The command never merges Assets or moves Records, and running it again
+only records what is still missing. It works whether or not **Asset Identity** is on, so you
+can run it before turning it on.
+
+## Asset Versions
+
+Most Assets ship in versions: releases, tags, image builds. A **version** records one of those
+against the Asset, so an SBOM can describe one release and a Finding can say which releases it
+applies to. Versions are metadata about an Asset, not more Assets — a Finding stays a single row
+however many versions mention it. The model, the per-version bill of materials, and how imports
+record claims are covered in
+[Working with SBOMs](/asset_modelling/locations/pro__working_with_sboms/#asset-versions-and-bom-snapshots).
+This section is about reaching them in the UI.
+
+Versions require `DD_V3_ASSET_VERSIONS` to be enabled: set it on a self-hosted deployment, or
+contact support on Cloud. While it is off, none of the surfaces below are offered. An Asset with
+no versions behaves exactly as it does today.
+
+### The Versions widget
+
+Versions appear as an optional widget on the Asset page. Add it from **Page Layout → Edit Layout
+→ Add Widget → Data Table**, then choose `Versions` as the record set. The widget's header counts
+the versions declared on the Asset.
+
+The latest release leads, tagged **Newest**: the newest dated version, or the most recently declared
+one when no version has a release date. It shows its name, its release date, and three counts: how
+many BOM snapshots it has, and how many Findings are recorded as **Found In** it or **Fixed In** it.
+The rest list under **Earlier Versions**, below it or beside it on a wide widget, one line each with
+their release date and their Found In and Fixed In counts. A long list scrolls inside the widget.
+Versions are ordered by release date, newest first, and versions without a release date follow the
+dated ones, the most recently declared first, so an SBOM import newer than every dated release is
+listed after them. On a small widget only the leading version shows, with the number of the rest.
+
+**Add Version** declares one by hand, which is useful for a release you want to record claims
+against before any SBOM has been uploaded for it. Name it the way its producer does (`5.2.0`,
+`2026.08`, a build tag), because that is the string imports match against. The release date is
+optional and is a display hint: DefectDojo does not parse or order version names.
+
+Each version, the newest included, has a menu at the start of its line with **Remove**. Removing
+a version removes the snapshots and claims bound to it. The Findings themselves are untouched;
+only the per-version claims about them go.
+
+### Uploading an SBOM for a version
+
+**Import SBOM** on the Asset page takes an optional **Version**. Give it one and the upload is
+recorded as that version's bill of materials; leave it blank and the document's own subject
+version is used, or the upload stays on the unversioned stream if it declares none. A version
+named for the first time here is created then and there, so it does not have to be declared
+first.
+
+### Affected versions on a Finding
+
+A Finding carries **claims** about the versions it applies to — *found in* a version, or *fixed
+as of* one. Imports record these on their own; the **Affected Versions** table shows them and
+lets you record one by hand. Add it to the Finding page the same way: **Page Layout → Edit
+Layout → Add Widget → Data Table**, record set `Affected Versions`.
+
+Each row names the version, whether the claim is Found In or Fixed In, and where it came from —
+an import or a person — so it is clear whether a scanner said it or someone recorded it. Use
+**Record Claim** to add one, and the row action to withdraw one. Claims are added and withdrawn
+rather than edited, and nothing is inferred between them: a Finding found in 5.0.0 and fixed in
+5.2.0 says nothing on its own about 5.1.3.
 
 ## Asset Nesting
 
 DefectDojo supports parent-child relationship between two Assets within the same Organization. This can be configured during Asset creation or in the Asset’s settings. 
 
-You can visualize the structure of Assets in DefectDojo and change relationships using the **Asset Hierarchy** option in the sidebar.
+You can visualize the structure of Assets in DefectDojo and change relationships using **Act > Explore > Assets > Hierarchy** in the sidebar.
 
 After selecting the Assets to be visualized from the corresponding table, click **View Asset Hierarchy** to generate a flow chart of the relationship between the chosen Assets, if any.
 

@@ -5,7 +5,6 @@ import copy
 import logging
 import mimetypes
 from collections import OrderedDict, defaultdict
-from itertools import chain
 from pathlib import Path
 
 import pghistory
@@ -31,12 +30,12 @@ from imagekit.processors import ResizeToFill
 import dojo.finding.helper as finding_helper
 import dojo.risk_acceptance.helper as ra_helper
 from dojo.authorization.authorization import user_has_global_permission_or_403, user_has_permission_or_403
-from dojo.celery_dispatch import dojo_dispatch_task
 from dojo.endpoint.queries import get_authorized_endpoints
 from dojo.file_uploads.validators import image_content_matches_name
 from dojo.finding.deduplication import (
     _fetch_fp_candidates_for_batch,
     do_false_positive_history_batch,
+    manual_duplicate_hides_open_finding,
     match_finding_to_existing_findings,
 )
 from dojo.finding.queries import get_authorized_findings, get_authorized_findings_for_queryset, prefetch_for_findings
@@ -96,7 +95,6 @@ from dojo.models import (
     Test,
     Test_Import,
     Test_Import_Finding_Action,
-    User,
 )
 from dojo.notes.helper import visible_notes
 from dojo.notifications.helper import create_notification
@@ -123,6 +121,7 @@ from dojo.utils import (
     redirect,
     redirect_to_return_url_or_else,
     reopen_external_issue,
+    schedule_product_grade,
     update_external_issue,
 )
 from dojo.vulnerability.queries import vulnerability_id_prefetch
@@ -523,18 +522,18 @@ class ViewFinding(View):
         if similar_findings_enabled is False:
             return {
                 "similar_findings_enabled": similar_findings_enabled,
-                "duplicate_cluster": finding_helper.duplicate_cluster(finding),
+                "duplicate_cluster": duplicate_cluster(request, finding),
                 "similar_findings": None,
                 "similar_findings_filter": None,
             }
         # add related actions for non-similar and non-duplicate cluster members
-        finding.related_actions = finding_helper.calculate_possible_related_actions_for_similar_finding(
-            finding, finding,
+        finding.related_actions = calculate_possible_related_actions_for_similar_finding(
+            request, finding, finding,
         )
         if finding.duplicate_finding:
             finding.duplicate_finding.related_actions = (
-                finding_helper.calculate_possible_related_actions_for_similar_finding(
-                    finding, finding.duplicate_finding,
+                calculate_possible_related_actions_for_similar_finding(
+                    request, finding, finding.duplicate_finding,
                 )
             )
         filter_string_matching = get_system_setting("filter_string_matching", False)
@@ -559,14 +558,14 @@ class ViewFinding(View):
         )
         for similar_finding in similar_findings:
             similar_finding.related_actions = (
-                finding_helper.calculate_possible_related_actions_for_similar_finding(
-                    finding, similar_finding,
+                calculate_possible_related_actions_for_similar_finding(
+                    request, finding, similar_finding,
                 )
             )
 
         return {
             "similar_findings_enabled": similar_findings_enabled,
-            "duplicate_cluster": finding_helper.duplicate_cluster(finding),
+            "duplicate_cluster": duplicate_cluster(request, finding),
             "similar_findings": similar_findings,
             "similar_findings_filter": similar_findings_filter,
         }
@@ -639,10 +638,10 @@ class ViewFinding(View):
                 reverse("view_finding", args=(finding.id,)),
             )
             title = f"Finding: {finding.title}"
-            process_tag_notifications(request, new_note, url, title)
+            process_tag_notifications(request, new_note, url, title, parent=finding)
             # Add a message to the request
             messages.add_message(
-                request, messages.SUCCESS, "Note saved.", extra_tags="alert-success",
+                request, messages.SUCCESS, _("Note saved."), extra_tags="alert-success",
             )
 
             return request, True
@@ -950,7 +949,7 @@ class EditFinding(View):
             messages.add_message(
                 request,
                 messages.SUCCESS,
-                "Finding saved successfully.",
+                _("Finding saved successfully."),
                 extra_tags="alert-success",
             )
 
@@ -1097,12 +1096,12 @@ class DeleteFinding(View):
                 finding, push_to_jira=context["form"].cleaned_data.get("push_to_jira"),
             )
             # Update the grade of the product async
-            dojo_dispatch_task(calculate_grade, product.id)
+            schedule_product_grade(product.id)
             # Add a message to the request that the finding was successfully deleted
             messages.add_message(
                 request,
                 messages.SUCCESS,
-                "Finding deleted successfully.",
+                _("Finding deleted successfully."),
                 extra_tags="alert-success",
             )
 
@@ -1127,7 +1126,7 @@ class DeleteFinding(View):
         messages.add_message(
             request,
             messages.ERROR,
-            "Unable to delete finding, please try again.",
+            _("Unable to delete finding, please try again."),
             extra_tags="alert-danger",
         )
 
@@ -1170,7 +1169,7 @@ def close_finding(request, fid):
         )
 
         if form.is_valid():
-            messages.add_message(request, messages.SUCCESS, "Note Saved.", extra_tags="alert-success")
+            messages.add_message(request, messages.SUCCESS, _("Note Saved."), extra_tags="alert-success")
 
             if len(missing_note_types) <= 1:
                 finding_helper.close_finding(
@@ -1189,7 +1188,7 @@ def close_finding(request, fid):
                 messages.add_message(
                     request,
                     messages.SUCCESS,
-                    "Finding closed.",
+                    _("Finding closed."),
                     extra_tags="alert-success",
                 )
 
@@ -1226,7 +1225,7 @@ def verify_finding(request, fid):
         messages.add_message(
             request,
             messages.INFO,
-            "Finding already verified.",
+            _("Finding already verified."),
             extra_tags="alert-info",
         )
         return redirect_to_return_url_or_else(
@@ -1249,7 +1248,7 @@ def verify_finding(request, fid):
         messages.add_message(
             request,
             messages.SUCCESS,
-            "Finding verified.",
+            _("Finding verified."),
             extra_tags="alert-success",
         )
 
@@ -1339,7 +1338,7 @@ def defect_finding_review(request, fid):
                 jira_services.push(finding.finding_group)
 
             messages.add_message(
-                request, messages.SUCCESS, "Defect Reviewed", extra_tags="alert-success",
+                request, messages.SUCCESS, _("Defect Reviewed"), extra_tags="alert-success",
             )
             return HttpResponseRedirect(reverse("view_test", args=(finding.test.id,)))
 
@@ -1399,7 +1398,7 @@ def reopen_finding(request, fid):
     reopen_external_issue(finding.id, "re-opened by defectdojo", "github")
 
     messages.add_message(
-        request, messages.SUCCESS, "Finding Reopened.", extra_tags="alert-success",
+        request, messages.SUCCESS, _("Finding Reopened."), extra_tags="alert-success",
     )
 
     # Note: this notification has not be moved to "@receiver(pre_save, sender=Finding)" method as many other notifications
@@ -1430,11 +1429,11 @@ def copy_finding(request, fid):
             test = form.cleaned_data.get("test")
             product = finding.test.engagement.product
             finding_copy = finding.copy(test=test)
-            dojo_dispatch_task(calculate_grade, product.id)
+            schedule_product_grade(product.id)
             messages.add_message(
                 request,
                 messages.SUCCESS,
-                "Finding Copied successfully.",
+                _("Finding Copied successfully."),
                 extra_tags="alert-success",
             )
             create_notification(
@@ -1454,7 +1453,7 @@ def copy_finding(request, fid):
         messages.add_message(
             request,
             messages.ERROR,
-            "Unable to copy finding, please try again.",
+            _("Unable to copy finding, please try again."),
             extra_tags="alert-danger",
         )
 
@@ -1487,7 +1486,7 @@ def remediation_date(request, fid):
             messages.add_message(
                 request,
                 messages.SUCCESS,
-                "Finding Planned Remediation Date saved.",
+                _("Finding Planned Remediation Date saved."),
                 extra_tags="alert-success",
             )
             return HttpResponseRedirect(reverse("view_finding", args=(finding.id,)))
@@ -1529,7 +1528,7 @@ def simple_risk_accept(request, fid):
     ra_helper.simple_risk_accept(request.user, finding)
 
     messages.add_message(
-        request, messages.WARNING, "Finding risk accepted.", extra_tags="alert-success",
+        request, messages.WARNING, _("Finding risk accepted."), extra_tags="alert-success",
     )
 
     return redirect_to_return_url_or_else(
@@ -1545,7 +1544,7 @@ def risk_unaccept(request, fid):
     messages.add_message(
         request,
         messages.WARNING,
-        "Finding risk unaccepted.",
+        _("Finding risk unaccepted."),
         extra_tags="alert-success",
     )
 
@@ -1561,13 +1560,20 @@ def request_finding_review(request, fid):
     # in order to review a finding, we need to capture why a review is needed
     # we can do this with a Note
     if request.method == "POST":
+        if finding.under_review:
+            messages.add_message(request, messages.ERROR, _("This finding is already under review."), extra_tags="alert-danger")
+            return HttpResponseRedirect(reverse("view_finding", args=(finding.id,)))
+        # Requesting a review on a closed or mitigated finding reopens it, so that needs edit access.
+        if not finding.active or finding.is_mitigated:
+            user_has_permission_or_403(request.user, finding, "edit")
         form = ReviewFindingForm(request.POST, finding=finding, user=user)
 
         if form.is_valid():
             now = timezone.now()
             new_note = Notes()
+            # The note must stay public: the reviewers it is addressed to
+            # cannot read a private note (author and superusers only).
             new_note.entry = "Review Request: " + form.cleaned_data["entry"]
-            new_note.private = True
             new_note.author = request.user
             new_note.date = now
             new_note.save()
@@ -1627,7 +1633,7 @@ def request_finding_review(request, fid):
             messages.add_message(
                 request,
                 messages.SUCCESS,
-                "Finding marked for review and reviewers notified.",
+                _("Finding marked for review and reviewers notified."),
                 extra_tags="alert-success",
             )
             return HttpResponseRedirect(reverse("view_finding", args=(finding.id,)))
@@ -1703,7 +1709,7 @@ def clear_finding_review(request, fid):
             messages.add_message(
                 request,
                 messages.SUCCESS,
-                "Finding review has been updated successfully.",
+                _("Finding review has been updated successfully."),
                 extra_tags="alert-success",
             )
             return HttpResponseRedirect(reverse("view_finding", args=(finding.id,)))
@@ -1732,7 +1738,7 @@ def mktemplate(request, fid):
         messages.add_message(
             request,
             messages.ERROR,
-            "A finding template with that title already exists.",
+            _("A finding template with that title already exists."),
             extra_tags="alert-danger",
         )
     else:
@@ -1988,7 +1994,7 @@ def apply_template_to_finding(request, fid, tid):
             messages.add_message(
                 request,
                 messages.ERROR,
-                "There appears to be errors on the form, please correct below.",
+                _("There appears to be errors on the form, please correct below."),
                 extra_tags="alert-danger",
             )
             product_tab = Product_Tab(
@@ -2057,72 +2063,6 @@ def ensure_template_tags_in_finding_model(template):
         )
 
 
-def apply_cwe_mitigation(apply_to_findings, template, *, update=True):
-    count = 0
-    if apply_to_findings and template.template_match and template.cwe is not None:
-        # Update active, verified findings with the CWE template
-        # If CWE only match only update issues where there isn't a CWE + Title match
-        if template.template_match_title:
-            count = Finding.objects.filter(
-                active=True,
-                verified=True,
-                cwe=template.cwe,
-                title__icontains=template.title,
-            ).update(
-                mitigation=template.mitigation,
-                impact=template.impact,
-                references=template.references,
-            )
-        else:
-            finding_templates = Finding_Template.objects.filter(
-                cwe=template.cwe, template_match=True, template_match_title=True,
-            )
-
-            finding_ids = None
-            result_list = None
-            # Exclusion list
-            for title_template in finding_templates:
-                finding_ids = Finding.objects.filter(
-                    active=True,
-                    verified=True,
-                    cwe=title_template.cwe,
-                    title__icontains=title_template.title,
-                ).values_list("id", flat=True)
-                result_list = finding_ids if result_list is None else list(chain(result_list, finding_ids))
-
-            # If result_list is None the filter exclude won't work
-            if result_list:
-                count = Finding.objects.filter(
-                    active=True, verified=True, cwe=template.cwe,
-                ).exclude(id__in=result_list)
-            else:
-                count = Finding.objects.filter(
-                    active=True, verified=True, cwe=template.cwe,
-                )
-
-            if update:
-                # MySQL won't allow an 'update in statement' so loop will have to do
-                for finding in count:
-                    finding.mitigation = template.mitigation
-                    finding.impact = template.impact
-                    finding.references = template.references
-                    template.last_used = timezone.now()
-                    template.save()
-                    new_note = Notes()
-                    new_note.entry = (
-                        f"CWE remediation text applied to finding for CWE: {template.cwe} using template: {template.title}."
-                    )
-                    new_note.author, _created = User.objects.get_or_create(
-                        username="System",
-                    )
-                    new_note.save()
-                    finding.notes.add(new_note)
-                    finding.save()
-
-            count = count.count()
-    return count
-
-
 def add_template(request):
     form = FindingTemplateForm()
     if request.method == "POST":
@@ -2148,14 +2088,14 @@ def add_template(request):
             messages.add_message(
                 request,
                 messages.SUCCESS,
-                "Template created successfully.",
+                _("Template created successfully."),
                 extra_tags="alert-success",
             )
             return HttpResponseRedirect(reverse("templates"))
         messages.add_message(
             request,
             messages.ERROR,
-            "Template form has error, please revise and try again.",
+            _("Template form has error, please revise and try again."),
             extra_tags="alert-danger",
         )
     add_breadcrumb(title="Add Template", top_level=False, request=request)
@@ -2202,14 +2142,14 @@ def edit_template(request, tid):
             messages.add_message(
                 request,
                 messages.SUCCESS,
-                "Template updated successfully.",
+                _("Template updated successfully."),
                 extra_tags="alert-success",
             )
             return HttpResponseRedirect(reverse("templates"))
         messages.add_message(
             request,
             messages.ERROR,
-            "Template form has error, please revise and try again.",
+            _("Template form has error, please revise and try again."),
             extra_tags="alert-danger",
         )
 
@@ -2234,14 +2174,14 @@ def delete_template(request, tid):
             messages.add_message(
                 request,
                 messages.SUCCESS,
-                "Finding Template deleted successfully.",
+                _("Finding Template deleted successfully."),
                 extra_tags="alert-success",
             )
             return HttpResponseRedirect(reverse("templates"))
         messages.add_message(
             request,
             messages.ERROR,
-            "Unable to delete Template, please revise and try again.",
+            _("Unable to delete Template, please revise and try again."),
             extra_tags="alert-danger",
         )
         return None
@@ -2289,8 +2229,17 @@ def download_finding_pic(request, token):
             raise Http404
         size = access_token.size
         access_token.delete()
+        if access_token.user_id != request.user.id:
+            raise PermissionDenied
     except Exception:
         raise PermissionDenied
+
+    file_upload = access_token.file
+    owners = [*file_upload.engagement_set.all(), *file_upload.test_set.all(), *file_upload.finding_set.all()]
+    if not owners:
+        raise PermissionDenied
+    for obj in owners:
+        user_has_permission_or_403(request.user, obj, "view")
 
     with Path(access_token.file.file.file.name).open("rb") as file:
         file_name = file.name
@@ -2330,6 +2279,11 @@ def merge_finding_product(request, pid):
             if form.is_valid():
                 finding_to_merge_into = form.cleaned_data["finding_to_merge_into"]
                 findings_to_merge = form.cleaned_data["findings_to_merge"]
+                if form.cleaned_data["finding_action"] == "delete":
+                    for finding_to_remove in findings_to_merge:
+                        user_has_permission_or_403(
+                            request.user, finding_to_remove, "delete",
+                        )
                 finding_descriptions = ""
                 finding_references = ""
                 notes_entry = ""
@@ -2432,7 +2386,12 @@ def merge_finding_product(request, pid):
                         )
                     elif form.cleaned_data["finding_action"] == "delete":
                         finding_action = "deleted"
-                        findings_to_merge.delete()
+                        # Detach the target first, or the cluster cascade delete can remove it.
+                        Finding.objects.filter(
+                            pk=finding_to_merge_into.pk, duplicate_finding__in=findings_to_merge,
+                        ).update(duplicate=False, duplicate_finding=None)
+                        for finding_to_delete in findings_to_merge:
+                            finding_helper.delete_finding_with_conflict_retry(finding_to_delete, push_to_jira=None)
 
                     notes_entry = ("Finding consists of merged findings from the following "
                                    f"findings which have been {finding_action}: {notes_entry[:-1]}")
@@ -2443,7 +2402,7 @@ def merge_finding_product(request, pid):
                     messages.add_message(
                         request,
                         messages.SUCCESS,
-                        "Findings merged",
+                        _("Findings merged"),
                         extra_tags="alert-success",
                     )
                     return HttpResponseRedirect(
@@ -2452,14 +2411,14 @@ def merge_finding_product(request, pid):
                 messages.add_message(
                     request,
                     messages.ERROR,
-                    "Unable to merge findings. Findings to merge contained in finding to merge into.",
+                    _("Unable to merge findings. Findings to merge contained in finding to merge into."),
                     extra_tags="alert-danger",
                 )
             else:
                 messages.add_message(
                     request,
                     messages.ERROR,
-                    "Unable to merge findings. Required fields were not selected.",
+                    _("Unable to merge findings. Required fields were not selected."),
                     extra_tags="alert-danger",
                 )
 
@@ -2727,7 +2686,8 @@ def _bulk_update_finding_groups(finds, form):
 
         if skipped:
             add_success_message_to_response(
-                f"Skipped {skipped} findings in group creation, findings already part of another group",
+                f"Skipped {skipped} findings in group creation, findings are already part of "
+                "another group or do not belong to the group's test",
             )
 
         # refresh findings from db
@@ -2757,7 +2717,8 @@ def _bulk_update_finding_groups(finds, form):
         if skipped:
             add_success_message_to_response(
                 f"Skipped {skipped} findings when adding to finding group {finding_group.name}, "
-                "findings already part of another group",
+                "findings are already part of another group or do not belong to the "
+                "group's test",
             )
 
         # refresh findings from db
@@ -2824,6 +2785,40 @@ def _bulk_update_finding_groups(finds, form):
     return return_url, finds
 
 
+def _bulk_unlink_from_jira(request, finds):
+    """
+    Remove the DefectDojo link to the Jira issue of each finding, and of each finding group a selected finding belongs to.
+
+    The issues themselves are left untouched in Jira. Runs before _bulk_push_to_jira, so combining
+    unlink with push creates new issues in the Jira project currently configured for the product.
+    """
+    if not finds.exists():
+        # every selected finding was skipped for permission, which is already reported
+        return finds
+
+    finding_groups = {finding.finding_group for finding in finds if finding.has_jira_group_issue}
+    for group in finding_groups:
+        jira_services.unlink(request, group)
+
+    unlinked_count = 0
+    for finding in finds:
+        if finding.has_jira_issue:
+            jira_services.unlink_finding(request, finding)
+            unlinked_count += 1
+
+    if finding_groups:
+        noun = "finding group" if len(finding_groups) == 1 else "finding groups"
+        add_success_message_to_response(f"{len(finding_groups)} {noun} unlinked from JIRA successfully")
+    if unlinked_count > 0:
+        noun = "finding" if unlinked_count == 1 else "findings"
+        add_success_message_to_response(f"{unlinked_count} {noun} unlinked from JIRA successfully")
+    if not finding_groups and unlinked_count == 0:
+        add_error_message_to_response("None of the selected findings are linked to a JIRA issue")
+
+    # refresh from db so the push below does not see the deleted links
+    return finds.all()
+
+
 def _bulk_push_to_jira(finds, form, note):
     """Helper function to handle JIRA push operations."""
     error_counts = defaultdict(lambda: 0)
@@ -2873,11 +2868,6 @@ def _bulk_push_to_jira(finds, form, note):
     success_count = 0
     for finding in finds:
         tool_issue_updater.async_tool_issue_update(finding)
-
-        # not sure yet if we want to support bulk unlink, so leave as commented out for now
-        # if form.cleaned_data['unlink_from_jira']:
-        #     if finding.has_jira_issue:
-        #         jira_services.unlink_finding(request, finding)
 
         # Because we never call finding.save() in a bulk update, we need to actually
         # push the JIRA stuff here, rather than in finding.save()
@@ -2939,7 +2929,6 @@ def finding_bulk_update_all(request, pid=None):
         )
         finds = Finding.objects.filter(id__in=finding_to_update).order_by("id")
         total_find_count = finds.count()
-        prods = set(find.test.engagement.product for find in finds)  # noqa: C401
         if request.POST.get("delete_bulk_findings"):
             _bulk_delete_findings(request, pid, form, finding_to_update, finds, total_find_count)
         elif form.is_valid() and finding_to_update:
@@ -2953,6 +2942,7 @@ def finding_bulk_update_all(request, pid=None):
             finds = get_authorized_findings_for_queryset(
                 "edit", finds,
             ).distinct()
+            prods = {find.test.engagement.product for find in finds}
 
             skipped_find_count = total_find_count - finds.count()
             updated_find_count = finds.count()
@@ -3014,6 +3004,10 @@ def finding_bulk_update_all(request, pid=None):
                 # Delegate parsing and handling of strings/iterables to helper
                 bulk_add_tags_to_instances(tag_or_tags=tags, instances=finds, tag_field_name="tags")
 
+            # the checkbox is only shown when Jira is enabled; ignore a request that sends it anyway
+            if form.cleaned_data["unlink_from_jira"] and system_settings.enable_jira:
+                finds = _bulk_unlink_from_jira(request, finds)
+
             _bulk_push_to_jira(finds, form, note)
 
             # Show success message if status/severity updates were made (using actually_updated_count)
@@ -3031,7 +3025,8 @@ def finding_bulk_update_all(request, pid=None):
                 or form.cleaned_data["notes"] or form.cleaned_data["risk_acceptance"]
                 or form.cleaned_data["finding_group_create"] or form.cleaned_data["finding_group_add"]
                 or form.cleaned_data["finding_group_remove"] or form.cleaned_data["finding_group_by"]
-                or form.cleaned_data["push_to_jira"] or form.cleaned_data["push_to_github"]
+                or form.cleaned_data["push_to_jira"]
+                or form.cleaned_data["push_to_github"]
             ):
                 messages.add_message(
                     request,
@@ -3043,7 +3038,7 @@ def finding_bulk_update_all(request, pid=None):
             messages.add_message(
                 request,
                 messages.ERROR,
-                "Unable to process bulk update. Required fields were not selected.",
+                _("Unable to process bulk update. Required fields were not selected."),
                 extra_tags="alert-danger",
             )
 
@@ -3087,6 +3082,21 @@ def get_missing_mandatory_notetypes(finding):
     return Note_Type.objects.filter(id__in=notes_to_be_added)
 
 
+ENGAGEMENT_DEDUPLICATION_MISMATCH_MESSAGE = (
+    "Marking finding as duplicate/original failed as they are not in the same engagement "
+    "and deduplication_on_engagement is enabled for at least one of them"
+)
+
+
+def duplicate_onto_mitigated_message(duplicate, original):
+    """The refusal shown when a manual duplicate mark would hide an open finding under a mitigated one."""
+    return _(
+        "Finding %(original)s is mitigated, so marking finding %(duplicate)s as its duplicate would hide "
+        "a finding that is still open. Reopen finding %(original)s first, or mark it as a duplicate of "
+        "finding %(duplicate)s instead.",
+    ) % {"original": original.id, "duplicate": duplicate.id}
+
+
 @require_POST
 def mark_finding_duplicate(request, original_id, duplicate_id):
 
@@ -3102,13 +3112,24 @@ def mark_finding_duplicate(request, original_id, duplicate_id):
             messages.add_message(
                 request,
                 messages.ERROR,
-                ("Marking finding as duplicate/original failed as they are not in the same engagement "
-                 "and deduplication_on_engagement is enabled for at least one of them"),
+                ENGAGEMENT_DEDUPLICATION_MISMATCH_MESSAGE,
                 extra_tags="alert-danger",
             )
             return redirect_to_return_url_or_else(
                 request, reverse("view_finding", args=(duplicate.id,)),
             )
+
+    if manual_duplicate_hides_open_finding(duplicate, original):
+        root = original.duplicate_finding if original.duplicate and original.duplicate_finding else original
+        messages.add_message(
+            request,
+            messages.ERROR,
+            duplicate_onto_mitigated_message(duplicate, root),
+            extra_tags="alert-danger",
+        )
+        return redirect_to_return_url_or_else(
+            request, reverse("view_finding", args=(duplicate.id,)),
+        )
 
     duplicate.duplicate = True
     duplicate.active = False
@@ -3136,16 +3157,35 @@ def mark_finding_duplicate(request, original_id, duplicate_id):
     )
 
 
+def reset_finding_duplicate_status_internal(user, duplicate_id):
+    duplicate = get_object_or_404(Finding, id=duplicate_id)
+
+    if not duplicate.duplicate:
+        return None
+
+    logger.debug("resetting duplicate status of %i", duplicate.id)
+    duplicate.duplicate = False
+    duplicate.active = True
+    if duplicate.duplicate_finding:
+        # duplicate.duplicate_finding.original_finding.remove(duplicate)  # shouldn't be needed
+        duplicate.duplicate_finding = None
+    duplicate.last_reviewed = timezone.now()
+    duplicate.last_reviewed_by = user
+    duplicate.save(dedupe_option=False)
+
+    return duplicate.id
+
+
 @require_POST
 def reset_finding_duplicate_status(request, duplicate_id):
-    checked_duplicate_id = finding_helper.reset_finding_duplicate_status_internal(
+    checked_duplicate_id = reset_finding_duplicate_status_internal(
         request.user, duplicate_id,
     )
     if checked_duplicate_id is None:
         messages.add_message(
             request,
             messages.ERROR,
-            "Can't reset duplicate status of a finding that is not a duplicate",
+            _("Can't reset duplicate status of a finding that is not a duplicate"),
             extra_tags="alert-danger",
         )
         return redirect_to_return_url_or_else(
@@ -3157,17 +3197,91 @@ def reset_finding_duplicate_status(request, duplicate_id):
     )
 
 
+def set_finding_as_original_internal(user, finding_id, new_original_id):
+    """Make ``new_original`` the original of ``finding``'s cluster. True on success, False when refused."""
+    return set_finding_as_original_with_reason(user, finding_id, new_original_id) is None
+
+
+def set_finding_as_original_with_reason(user, finding_id, new_original_id):
+    """
+    Make ``new_original`` the original of ``finding``'s cluster.
+
+    Returns None on success, or the message explaining why it was refused.
+    """
+    finding = get_object_or_404(Finding, id=finding_id)
+    new_original = get_object_or_404(
+        Finding.objects.filter(test__engagement__product=finding.test.engagement.product),
+        id=new_original_id,
+    )
+
+    if finding.test.engagement != new_original.test.engagement:
+        if (finding.test.engagement.deduplication_on_engagement
+                or new_original.test.engagement.deduplication_on_engagement):
+            return ENGAGEMENT_DEDUPLICATION_MISMATCH_MESSAGE
+
+    # The finding itself, and the cluster root it currently points at, both end up under new_original.
+    for moved in (finding, finding.duplicate_finding if finding.duplicate else None):
+        if moved is not None and moved != new_original and manual_duplicate_hides_open_finding(moved, new_original):
+            return duplicate_onto_mitigated_message(moved, new_original)
+
+    if finding.duplicate or finding.original_finding.all():
+        # existing cluster, so update all cluster members
+
+        if finding.duplicate and finding.duplicate_finding:
+            logger.debug(
+                "setting old original %i as duplicate of %i",
+                finding.duplicate_finding.id,
+                new_original.id,
+            )
+            finding.duplicate_finding.duplicate_finding = new_original
+            finding.duplicate_finding.duplicate = True
+            finding.duplicate_finding.save(dedupe_option=False)
+
+        for cluster_member in finding.duplicate_finding_set().filter(test__engagement__product=finding.test.engagement.product):
+            if cluster_member != new_original:
+                logger.debug(
+                    "setting new original for %i to %i",
+                    cluster_member.id,
+                    new_original.id,
+                )
+                cluster_member.duplicate_finding = new_original
+                cluster_member.save(dedupe_option=False)
+
+        logger.debug(
+            "setting new original for old root %i to %i", finding.id, new_original.id,
+        )
+        finding.duplicate = True
+        finding.duplicate_finding = new_original
+        finding.save(dedupe_option=False)
+
+    else:
+        # creating a new cluster, so mark finding as duplicate
+        logger.debug("marking %i as duplicate of %i", finding.id, new_original.id)
+        finding.duplicate = True
+        finding.active = False
+        finding.duplicate_finding = new_original
+        finding.last_reviewed = timezone.now()
+        finding.last_reviewed_by = user
+        finding.save(dedupe_option=False)
+
+    logger.debug("marking new original %i as not duplicate", new_original.id)
+    new_original.duplicate = False
+    new_original.duplicate_finding = None
+    new_original.save(dedupe_option=False)
+
+    return None
+
+
 @require_POST
 def set_finding_as_original(request, finding_id, new_original_id):
-    success = finding_helper.set_finding_as_original_internal(
+    refusal = set_finding_as_original_with_reason(
         request.user, finding_id, new_original_id,
     )
-    if not success:
+    if refusal:
         messages.add_message(
             request,
             messages.ERROR,
-            ("Marking finding as duplicate/original failed as they are not in the same engagement "
-             "and deduplication_on_engagement is enabled for at least one of them"),
+            refusal,
             extra_tags="alert-danger",
         )
 
@@ -3189,7 +3303,7 @@ def unlink_jira(request, fid):
             messages.add_message(
                 request,
                 messages.SUCCESS,
-                "Link to JIRA issue succesfully deleted",
+                _("Link to JIRA issue succesfully deleted"),
                 extra_tags="alert-success",
             )
 
@@ -3199,14 +3313,14 @@ def unlink_jira(request, fid):
             messages.add_message(
                 request,
                 messages.ERROR,
-                "Link to JIRA could not be deleted, see alerts for details",
+                _("Link to JIRA could not be deleted, see alerts for details"),
                 extra_tags="alert-danger",
             )
 
             return HttpResponse(status=500)
     else:
         messages.add_message(
-            request, messages.ERROR, "Link to JIRA not found", extra_tags="alert-danger",
+            request, messages.ERROR, _("Link to JIRA not found"), extra_tags="alert-danger",
         )
         return HttpResponse(status=400)
 
@@ -3237,7 +3351,7 @@ def push_to_jira(request, fid):
             messages.add_message(
                 request,
                 messages.SUCCESS,
-                "Push to JIRA failed, check alerts on the top right for errors",
+                _("Push to JIRA failed, check alerts on the top right for errors"),
                 extra_tags="alert-danger",
             )
 
@@ -3245,6 +3359,124 @@ def push_to_jira(request, fid):
     except Exception:
         logger.exception("Error pushing to JIRA")
         messages.add_message(
-            request, messages.ERROR, "Error pushing to JIRA", extra_tags="alert-danger",
+            request, messages.ERROR, _("Error pushing to JIRA"), extra_tags="alert-danger",
         )
         return HttpResponse(status=500)
+
+
+# precalculate because we need related_actions to be set
+def duplicate_cluster(request, finding):
+    duplicate_cluster = finding.duplicate_finding_set()
+    if duplicate_cluster:
+        duplicate_cluster = get_authorized_findings_for_queryset("view", duplicate_cluster)
+
+    duplicate_cluster = prefetch_for_findings(duplicate_cluster)
+
+    # populate actions for findings in duplicate cluster
+    for duplicate_member in duplicate_cluster:
+        duplicate_member.related_actions = (
+            calculate_possible_related_actions_for_similar_finding(
+                request, finding, duplicate_member,
+            )
+        )
+
+    return duplicate_cluster
+
+
+# django doesn't allow much logic or even method calls with parameters in templates.
+# so we have to use a function in this view to calculate the possible actions on a similar (or duplicate) finding.
+# and we assign this dictionary to the finding so it can be accessed in the template.
+# these actions are always calculated in the context of the finding the user is viewing
+# because this determines which actions are possible
+def calculate_possible_related_actions_for_similar_finding(
+    request, finding, similar_finding,
+):
+    actions = []
+    if similar_finding.test.engagement != finding.test.engagement and (
+        similar_finding.test.engagement.deduplication_on_engagement
+        or finding.test.engagement.deduplication_on_engagement
+    ):
+        actions.append(
+            {
+                "action": "None",
+                "reason": ("This finding is in a different engagement and deduplication_inside_engagment "
+                           "is enabled here or in that finding"),
+            },
+        )
+    elif finding.duplicate_finding == similar_finding:
+        actions.append(
+            {
+                "action": "None",
+                "reason": ("This finding is the root of the cluster, use an action on another row, "
+                           "or the finding on top of the page to change the root of the cluser"),
+            },
+        )
+    elif similar_finding.original_finding.all():
+        actions.append(
+            {
+                "action": "None",
+                "reason": ("This finding is similar, but is already an original in a different cluster. "
+                           "Remove it from that cluster before you connect it to this cluster."),
+            },
+        )
+    elif similar_finding.duplicate_finding:
+        # reset duplicate status is always possible
+        actions.append(
+            {
+                "action": "reset_finding_duplicate_status",
+                "reason": ("This will remove the finding from the cluster, "
+                           "effectively marking it no longer as duplicate. "
+                           "Will not trigger deduplication logic after saving."),
+            },
+        )
+
+        if similar_finding.duplicate_finding in {finding, finding.duplicate_finding}:
+            # duplicate inside the same cluster
+            actions.append(
+                {
+                    "action": "set_finding_as_original",
+                    "reason": ("Sets this finding as the Original for the whole cluster. "
+                               "The existing Original will be downgraded to become a member of the cluster and, "
+                               "together with the other members, will be marked as duplicate of the new Original."),
+                },
+            )
+        else:
+            # duplicate inside different cluster
+            actions.append(
+                {
+                    "action": "mark_finding_duplicate",
+                    "reason": ("Will mark this finding as duplicate of the root finding in this cluster, "
+                               "effectively adding it to the cluster and removing it from the other cluster."),
+                },
+            )
+    # similar is not a duplicate yet
+    elif finding.duplicate or finding.original_finding.all():
+        actions.extend((
+            {
+                "action": "mark_finding_duplicate",
+                "reason": "Will mark this finding as duplicate of the root finding in this cluster",
+            }, {
+                "action": "set_finding_as_original",
+                "reason": (
+                    "Sets this finding as the Original for the whole cluster. "
+                    "The existing Original will be downgraded to become a member of the cluster and, "
+                    "together with the other members, will be marked as duplicate of the new Original."
+                ),
+            },
+        ))
+    else:
+        # similar_finding is not an original/root of a cluster as per earlier if clause
+        actions.extend((
+            {
+                "action": "mark_finding_duplicate",
+                "reason": "Will mark this finding as duplicate of the finding on this page.",
+            }, {
+                "action": "set_finding_as_original",
+                "reason": (
+                    "Sets this finding as the Original marking the finding "
+                    "on this page as duplicate of this original."
+                ),
+            },
+        ))
+
+    return actions

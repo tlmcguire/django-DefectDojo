@@ -3,12 +3,15 @@ import logging
 import pghistory
 from dateutil.relativedelta import relativedelta
 from django.core.exceptions import PermissionDenied
+from django.db import transaction
+from django.db.models import Exists, OuterRef, Q
 from django.urls import reverse
 from django.utils import timezone
 
 from dojo.celery import app
 from dojo.jira import services as jira_services
 from dojo.models import Dojo_User, Engagement, Finding, Notes, Risk_Acceptance, System_Settings
+from dojo.notifications import ticket_comments
 from dojo.notifications.helper import create_notification
 from dojo.utils import get_full_url, get_system_setting
 
@@ -109,6 +112,13 @@ def expire_now(risk_acceptance, user=None, reason=None):
                 finding.active = True
                 finding.risk_accepted = False
 
+                # Restore Verified so the finding returns to "Active, Verified" rather than
+                # keeping the (usually unverified) state it had while risk accepted. Opt-in,
+                # because the pre-acceptance verified value is not tracked and some workflows
+                # rely on reactivated findings staying unverified until re-triaged.
+                if risk_acceptance.restore_verified_expired:
+                    finding.verified = True
+
                 # Update any endpoint statuses on each of the findings
                 update_endpoint_statuses(finding, accept_risk=False)
 
@@ -148,8 +158,49 @@ def expire_now(risk_acceptance, user=None, reason=None):
                          url=reverse("view_risk_acceptance", args=(engagement.id, risk_acceptance.id)))
 
 
+def findings_accepted_elsewhere(risk_acceptance):
+    """
+    The members of an expired risk acceptance that have been risk accepted some other way since it expired.
+
+    A finding is risk accepted by one acceptance at a time, through its single ``risk_accepted`` flag. When an
+    acceptance that reactivates its findings expires, it clears that flag but keeps the findings as members, so
+    one of them may be accepted again: in another risk acceptance, or with a simple risk acceptance. A member
+    that is risk accepted again belongs to that acceptance now. Without reactivation the members stay risk
+    accepted by this acceptance, so only one another unexpired acceptance also lists counts.
+    """
+    in_another = Risk_Acceptance.objects.filter(
+        accepted_findings=OuterRef("pk"),
+        expiration_date_handled__isnull=True,
+    ).exclude(pk=risk_acceptance.pk)
+    held = Q(Exists(in_another))
+    if risk_acceptance.reactivate_expired:
+        held |= Q(risk_accepted=True)
+    return risk_acceptance.accepted_findings.filter(risk_accepted=True).filter(held)
+
+
 def reinstate(risk_acceptance, old_expiration_date, user=None, reason=None):
+    # One transaction, so the members' lock below holds until the reinstate is written.
+    with transaction.atomic():
+        _reinstate(risk_acceptance, old_expiration_date, user=user, reason=reason)
+
+
+def _reinstate(risk_acceptance, old_expiration_date, user=None, reason=None):
     if risk_acceptance.expiration_date_handled:
+        # The members are read under a lock, in id order: another write accepting one of them at the same
+        # moment waits for this reinstate (or this reinstate for it), so the member is either left out or
+        # re-accepted, never both.
+        member_ids = list(risk_acceptance.accepted_findings.values_list("id", flat=True))
+        list(Finding.objects.select_for_update().filter(id__in=member_ids).order_by("id").values_list("id", flat=True))
+        # A member accepted elsewhere since the expiry stays where it is: reinstating would otherwise list it
+        # in two acceptances, and expiring or removing either one later would clear the flag the other relies on.
+        if accepted_elsewhere := list(findings_accepted_elsewhere(risk_acceptance)):
+            logger.info(
+                "Reinstating risk acceptance %i:%s leaves out %i findings accepted elsewhere since it expired",
+                risk_acceptance.id,
+                risk_acceptance,
+                len(accepted_elsewhere),
+            )
+            risk_acceptance.accepted_findings.remove(*accepted_elsewhere)
         logger.info("Reinstating risk acceptance %i:%s with %i findings", risk_acceptance.id, risk_acceptance, len(risk_acceptance.accepted_findings.all()))
 
         # The "Reinstate" button has no date to offer and passes the expiration date
@@ -169,15 +220,14 @@ def reinstate(risk_acceptance, old_expiration_date, user=None, reason=None):
                 update_endpoint_statuses(finding, accept_risk=True)
                 # this method both saves and pushed to JIRA (no other post processing)
                 finding.save(dedupe_option=False)
-                if jira_services.is_push_all_issues(finding) or jira_services.is_keep_in_sync(finding):
-                    logger.info("pushing finding to JIRA after reinstating risk acceptance")
-                    jira_services.push(finding)
+                push_to_jira_after_commit(finding, "reinstating risk acceptance")
                 reinstated_findings.append(finding)
             else:
                 logger.debug("%i:%s: already inactive, not making any changes", finding.id, finding)
 
         # best effort JIRA integration, no status changes, just a comment
-        post_jira_comments(risk_acceptance, risk_acceptance.accepted_findings.all(), reinstation_message_creator)
+        members = list(risk_acceptance.accepted_findings.all())
+        transaction.on_commit(lambda: post_jira_comments(risk_acceptance, members, reinstation_message_creator))
 
         note_on_risk_acceptance(risk_acceptance, user, "reinstated", reason=reason)
 
@@ -242,10 +292,7 @@ def add_findings_to_risk_acceptance(user: Dojo_User, risk_acceptance: Risk_Accep
             update_endpoint_statuses(finding, accept_risk=True)
 
             risk_acceptance.accepted_findings.add(finding)
-
-            if jira_services.is_push_all_issues(finding) or jira_services.is_keep_in_sync(finding):
-                logger.info("pushing finding to JIRA after adding to risk acceptance")
-                jira_services.push(finding)
+            push_to_jira_after_commit(finding, "adding to risk acceptance")
 
         # Add a note to reflect that the finding was removed from the risk acceptance
         if user is not None:
@@ -258,7 +305,20 @@ def add_findings_to_risk_acceptance(user: Dojo_User, risk_acceptance: Risk_Accep
             ))
     risk_acceptance.save()
     # best effort jira integration, no status changes
-    post_jira_comments(risk_acceptance, findings, accepted_message_creator)
+    findings = list(findings)
+    transaction.on_commit(lambda: post_jira_comments(risk_acceptance, findings, accepted_message_creator))
+
+
+def push_to_jira_after_commit(finding: Finding, action: str) -> None:
+    """
+    Push a finding to JIRA once the surrounding transaction commits (right away when there is none).
+
+    The push re-reads the finding, so sent from inside the transaction it could sync the status from
+    before the change; and a caller holding row locks would otherwise hold them for the JIRA call.
+    """
+    if jira_services.is_push_all_issues(finding) or jira_services.is_keep_in_sync(finding):
+        logger.info("pushing finding to JIRA after %s", action)
+        transaction.on_commit(lambda: jira_services.push(finding))
 
 
 @app.task
@@ -364,8 +424,42 @@ def unaccepted_message_creator(risk_acceptance, heads_up_days=0):
     return "Finding is no longer risk accepted"
 
 
+def _ticket_comment_event(message_factory):
+    """The ticket comment event a message creator's comment is about, or None for an unknown creator."""
+    return {
+        accepted_message_creator: ticket_comments.RISK_ACCEPTANCE_ACCEPTED,
+        unaccepted_message_creator: ticket_comments.RISK_ACCEPTANCE_UNACCEPTED,
+        reinstation_message_creator: ticket_comments.RISK_ACCEPTANCE_REINSTATED,
+        expiration_warning_message_creator: ticket_comments.RISK_ACCEPTANCE_EXPIRATION_WARNING,
+        expiration_message_creator: ticket_comments.RISK_ACCEPTANCE_EXPIRED,
+    }.get(message_factory)
+
+
+def post_ticket_comments(risk_acceptance, findings, message_factory, heads_up_days=0):
+    """
+    Hand the comment to the registered ticket comment handlers (see dojo.notifications.ticket_comments).
+
+    Runs before, and apart from, the JIRA project's own setting: each handler decides for its tickets.
+    Never raises, so the JIRA comment and the change that caused it go ahead whatever happens here.
+    """
+    if not ticket_comments.has_ticket_comment_handlers():
+        return
+    event = _ticket_comment_event(message_factory)
+    if event is None:
+        return
+    try:
+        text = message_factory(risk_acceptance, heads_up_days)
+    except Exception:
+        logger.exception("Could not build the %s ticket comment", event)
+        return
+    ticket_comments.dispatch_ticket_comments(event, findings, text, risk_acceptance=risk_acceptance)
+
+
 def post_jira_comment(finding, message_factory, heads_up_days=0):
-    if not finding or (not finding.has_jira_issue and not finding.has_jira_group_issue):
+    if not finding:
+        return
+    post_ticket_comments(None, [finding], message_factory, heads_up_days)
+    if not finding.has_jira_issue and not finding.has_jira_group_issue:
         return
     jira_project = jira_services.get_project(finding)
 
@@ -386,6 +480,11 @@ def post_jira_comment(finding, message_factory, heads_up_days=0):
 def post_jira_comments(risk_acceptance, findings, message_factory, heads_up_days=0):
     if not risk_acceptance:
         return
+
+    if ticket_comments.has_ticket_comment_handlers():
+        # read once, for the handlers and the JIRA comments alike
+        findings = list(findings)
+        post_ticket_comments(risk_acceptance, findings, message_factory, heads_up_days)
 
     jira_project = jira_services.get_project(risk_acceptance.engagement)
 

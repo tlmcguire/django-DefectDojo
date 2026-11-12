@@ -16,7 +16,7 @@ This guide walks the full lifecycle: authenticate, discover the widget vocabular
 
 Every request authenticates with a personal API token sent in the `Authorization` header using the `Token` prefix (not `Bearer`).
 
-Get your token from the DefectDojo Pro UI under **User Settings → API v2 Key**. Store it in an environment variable so it never lands in your shell history or a committed script:
+Get your token from the DefectDojo Pro UI from the user menu (your name at the bottom of the sidebar) under **API v2 Token**. Store it in an environment variable so it never lands in your shell history or a committed script:
 
 ```bash
 export DD_IMPORTER_DOJO_API_TOKEN="YOUR_API_TOKEN"
@@ -45,7 +45,7 @@ curl -s \
   "https://[YOUR-INSTANCE].cloud.defectdojo.com/api/v2/dashboards/widget_catalog/"
 ```
 
-> **🔑 Important:** The entire Dashboards API depends on the Customizable Dashboards feature. Until it is turned on, every endpoint returns `403 Dashboard V2 is not enabled.` — see [Enabling Customizable Dashboards](../custom-dashboards/#enabling-customizable-dashboards).
+> **🔑 Important:** The entire Dashboards API depends on the Customizable Dashboards feature. Until it is turned on, every endpoint returns `403 Dashboards 2.0 is not enabled.` — see [Enabling Customizable Dashboards](../custom-dashboards/#enabling-customizable-dashboards).
 
 > **⚠️ Security Notice:** Your API token grants full access to your DefectDojo data. Never paste it into a chat, screenshot, ticket, or committed file. Read it from an environment variable, rotate it if it is ever exposed, and scope tokens to service accounts where possible.
 
@@ -69,7 +69,7 @@ Three things in a widget are easy to get wrong if you guess: the **widget type**
 
 ### The widget catalog
 
-`GET /dashboards/widget_catalog/` returns every widget type, the category it belongs to, the data endpoint(s) it renders against, and — most usefully — a minimal known-good `config_example` you can copy as a starting point:
+`GET /dashboards/widget_catalog/` returns every widget type, the category it belongs to, the data endpoint(s) it renders against, which surfaces it can appear on, and, most usefully, a minimal known-good `config_example` you can copy as a starting point:
 
 ```bash
 curl -s \
@@ -93,6 +93,7 @@ The response is shaped like this (truncated):
       "type": "count",
       "label": "Count",
       "category": "numbers",
+      "surfaces": ["dashboard", "report"],
       "description": "Single number rendered from a filtered queryset...",
       "data_endpoints": ["/api/v2/dashboards/widget_data/count/"],
       "config_example": {
@@ -106,6 +107,7 @@ The response is shaped like this (truncated):
       "type": "graph",
       "label": "Graph",
       "category": "charts",
+      "surfaces": ["dashboard", "report"],
       "description": "Generic chart over any model + group-by dimension...",
       "data_endpoints": ["/api/v2/dashboards/widget_data/aggregate/"],
       "config_example": {
@@ -122,6 +124,8 @@ The response is shaped like this (truncated):
   ]
 }
 ```
+
+Each entry also carries `surfaces`. Every widget lists `dashboard`; the ones a report can also draw additionally list `report`, and those are exactly the widget types a `widget` report block may name (see the [Report Builder API](../../reports/report-builder-api/)).
 
 Use a widget's `type` as the widget's `type`, and its `config_example` as the starting point for the widget's `config`. The catalog lists 26 widget types across the four categories.
 
@@ -157,7 +161,7 @@ The `kind` matters: a `time` dimension (like `date`) requires you to also send a
 
 ### Filters
 
-A widget's `config.filters` use the **same filter shape as the object's list view** — the values the list page emits to its URL, not the raw REST query parameters. For example, on findings: `{"status_any": "Active"}`, `{"severity": "Critical"}`, `{"duplicate": "false"}`, `{"date_past_days": 7}`, `{"sla_days_remaining_less_than_equal_to": 7}`; on assets: `{"grade": "A,B,C"}`, `{"last_scanned_past_days": 90}`. The quickest way to learn the right filter for a need is to apply it on the relevant list page in the UI and read it back from the widget config dialog, or to copy the filters from the seeded shared templates.
+A widget's `config.filters` use the **same filter shape as the object's list view**: the values the list page emits to its URL, not the raw REST query parameters. For example, on findings: `{"status_any": "Active"}`, `{"severity": "Critical"}`, `{"duplicate": "false"}`, `{"date_past_days": 7}`, `{"date_past_full_months": 6}` (the last six complete calendar months, not counting the current one), `{"sla_days_remaining_less_than_equal_to": 7}`; on assets: `{"grade": "A,B,C"}`, `{"last_scanned_past_days": 90}`. The quickest way to learn the right filter for a need is to apply it on the relevant list page in the UI and read it back from the widget config dialog, or to copy the filters from the seeded shared templates.
 
 > **🔑 Important:** Unknown filter **keys are silently ignored** — a misspelled or non-existent filter does not raise an error, it simply does not apply, leaving the widget showing a wider population than you intended. Invalid *values* for a real filter return `400`. Always [verify what you built](#verify-what-you-built) by reading the layout back. (Filters are validated through the same FilterSet the list view uses, so list values may be passed as arrays for "any-of" matching: `{"severity": ["Critical", "High"]}`.)
 
@@ -228,18 +232,34 @@ curl -s -X POST \
   }'
 ```
 
-The response echoes the saved layout including its new `id`, plus read-only helper fields (`is_default`, `is_owned`, `is_catalog`, `category`, `icon`, and timestamps).
+The response echoes the saved layout including its new `id`, plus read-only helper fields (`is_default`, `is_owned`, `can_edit`, `can_manage`, `is_catalog`, `category`, `icon`, and timestamps). `can_edit` reports whether the caller may change the layout's `widgets`, `layout`, and `settings`; `can_manage` whether they may rename, share, unshare, flag, or delete it.
 
 ### Custom actions
 
 | Action | Call | What it does |
 |--------|------|--------------|
-| Set default | `POST /dashboards/layouts/{id}/set_default/` | Makes this layout the one your home page loads. You can only default a layout you own. |
+| Set default | `POST /dashboards/layouts/{id}/set_default/` | Makes this layout the one your home page loads. You can default a layout you own, or any collaborative shared layout. |
 | Clone | `POST /dashboards/layouts/{id}/clone/` (optional body `{"name": "..."}`) | Copies a layout (yours or a shared template) into your space with fresh widget IDs. Defaults to `"Copy of <name>"`. |
 | List shared | `GET /dashboards/layouts/shared/` | Lists every shared layout — curated templates plus team-published ones. |
-| Bootstrap | `GET /dashboards/layouts/for_current_user/` | Returns `{"results": [...your layouts...], "default_id": <id>}`. On a first call, it auto-clones the starter template so you always get at least one layout back. |
+| Bootstrap | `GET /dashboards/layouts/for_current_user/` | Returns `{"results": [...your layouts, then any collaborative shared layouts...], "default_id": <id>}`. On a first call, it auto-clones the starter template so you always get at least one layout back. |
 
 Publishing a shared layout (`"is_shared": true` on create or update) requires the global **Maintainer** role.
+
+### Collaborative layouts
+
+A shared layout can also be flagged `"is_collaborative": true` (same Maintainer requirement; only a shared layout can carry the flag, and unsharing clears it). A collaborative layout is one live dashboard for everyone rather than a template to clone: it is included in every user's `for_current_user/` results, any user may make it their default, and any authenticated user may `PATCH` its `widgets`, `layout`, and `settings`. Changing its `name`, `is_shared`, or `is_collaborative`, or deleting it, still requires the Maintainer role; a collaborator attempting that receives `403`. The `clone` action on a collaborative layout produces an ordinary personal copy. Writes are last-write-wins, so clients that edit collaborative layouts should re-read the row before saving.
+
+A collaborative layout can additionally be flagged `"is_read_only": true` (same Maintainer requirement; only a collaborative layout can carry the flag, and setting `is_collaborative` to `false` or unsharing the layout clears it). A read-only layout is still included in every user's `for_current_user/` results and any user may still make it their default or `clone` it, but only a Maintainer or the layout's owner may `PATCH` its `widgets`, `layout`, and `settings`; anyone else receives `403`. The owner keeps that right even without the Maintainer role, but renaming, unsharing, deleting it and changing its flags still require the Maintainer role. Each layout in a response carries `can_edit`, so a client can tell whether the caller may change it before trying.
+
+```bash
+# Mark an existing collaborative layout read-only: everyone keeps using it, only Maintainers and its owner edit it
+curl -s -X PATCH \
+  -H "Authorization: Token ${DD_IMPORTER_DOJO_API_TOKEN}" \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  "https://[YOUR-INSTANCE].cloud.defectdojo.com/api/v2/dashboards/layouts/[LAYOUT-ID]/" \
+  -d '{"is_read_only": true}'
+```
 
 ## Step 3: Render widget data (optional)
 
@@ -283,8 +303,12 @@ The full set of `widget_data` actions:
 
 | Action | Method | Key payload / params | Returns |
 |--------|--------|----------------------|---------|
-| `count` | POST | `model`, `filters` | `{count}` |
-| `aggregate` | POST | `model`, `filters`, `group_by`, `aggregation`, `time_bucket?`, `limit?` | `{labels, series, ...}` |
+| `count` | POST | `model`, `filters`, `aggregation?` | `{count}` |
+| `aggregate` | POST | `model`, `filters`, `group_by`, `aggregation`, `time_bucket?`, `limit?`, `series_by?` | `{labels, series, ...}` |
+
+`series_by` splits every group by a second dimension from the same `dimensions/` list (not a `time` one, and not the `group_by`). The response then carries one entry per value in `series`, each `{"key", "name", "data"}` with a number for every label (0 where the group has none of that value), plus `series_by` and `series_by_label`. At most 10 series are returned: for `count` the rest are combined into one series with the key `__other__`, and for a distinct `aggregation` more than 10 values is a `400`. A `time` `group_by` returns every bucket from the first to the last (or across the request's own date filter on the same field), with 0 for an empty one, and leaves out records with no date.
+
+`aggregation` is `count` (rows, the default) for every model. For `finding` it can also be `distinct_cwe`, the number of unique CWEs (a CWE of 0 or none is not counted), or `distinct_vulnerability_id`, the number of unique vulnerability IDs. A finding with both a CWE and a CVE counts in both. With a `group_by`, a CWE that appears at two severities counts under each, so the per-group numbers can add up to more than the total.
 | `dimensions` | GET | `?model=` | valid group-by dimensions |
 | `top_records` | POST | `model`, `filters`, `metric`, `limit?`, `sort?` | `{labels, series, ...}` |
 | `record_metrics` | GET | `?model=` | valid records-mode metrics |
@@ -303,6 +327,7 @@ The full set of `widget_data` actions:
 | `sla_burndown` | GET | `?days_threshold=`, `?severity_filter=`, `?limit=`, `?include_overdue=` | findings nearing SLA breach |
 | `recent_activity` | GET | `?model=`, `?limit=` | recent records feed |
 | `saved_reports` | GET | `?limit=` | saved Report Templates *(requires Reporting)* |
+| `root_causes` | POST | `limit?` | ranked Root Cause clusters *(requires Root Cause Correlation)* |
 | `usage` | GET | — | license-usage breakdown *(requires Maintainer)* |
 
 ## Putting it together: a full lifecycle script
@@ -485,3 +510,4 @@ curl -s -X POST \
 
 - Build and arrange the same layouts interactively in the [Customizable Dashboards UI](../custom-dashboards/).
 - Let an LLM design and build dashboards for you with the [Dashboards LLM integration](../custom-dashboards-llm/).
+- Use the same endpoints through an AI assistant connected to the [MCP Server's Dashboards Toolset](../../ai/mcp_server_pro/#dashboards-toolset).

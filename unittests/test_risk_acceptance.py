@@ -1,10 +1,13 @@
 import copy
 import datetime
 import logging
+import re
 from unittest.mock import patch
 
 from dateutil.relativedelta import relativedelta
+from django.db import connection
 from django.db.models import Q
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -104,6 +107,32 @@ class RiskAcceptanceTestUI(DojoTestCase):
 
         self.assertEqual(302, response.status_code, response.content[:1000])
         self.assert_all_inactive_risk_accepted(Finding.objects.filter(id__in=[2, 3, 4, 5]))
+
+    def test_add_risk_acceptance_only_covers_the_engagements_findings(self):
+        # finding 22 belongs to engagement 3 of the same product
+        ra_data = copy.copy(self.data_risk_accceptance)
+        ra_data["accepted_findings"] = [2, 22]
+        response = self.client.post(reverse("add_risk_acceptance", args=(1,)), ra_data)
+        self.assertEqual(200, response.status_code)
+        self.assertIn("accepted_findings", response.context["form"].errors)
+        self.assertFalse(Risk_Acceptance.objects.filter(name=ra_data["name"]).exists())
+        self.assertTrue(self.assert_all_active_not_risk_accepted(Finding.objects.filter(id__in=[2, 22])))
+
+    def test_add_findings_to_risk_acceptance_only_covers_the_engagements_findings(self):
+        self.test_add_risk_acceptance_multiple_findings_accepted()
+        ra = Risk_Acceptance.objects.last()
+
+        data_add_findings_to_ra = {
+            "add_findings": "Add Selected Findings",
+            "accepted_findings": [4, 22],
+        }
+        response = self.client.post(reverse("view_risk_acceptance", args=(1, ra.id)),
+                    urlencode(MultiValueDict(data_add_findings_to_ra), doseq=True),
+                    content_type="application/x-www-form-urlencoded")
+
+        self.assertEqual(200, response.status_code, response.content[:1000])
+        self.assertNotIn(22, ra.accepted_findings.values_list("id", flat=True))
+        self.assertTrue(self.assert_all_active_not_risk_accepted(Finding.objects.filter(id=22)))
 
     def test_remove_findings_from_risk_acceptance_findings_active(self):
         # create risk acceptance first
@@ -207,6 +236,43 @@ class RiskAcceptanceTestUI(DojoTestCase):
 
         self.assertTrue(all(finding.sla_start_date == timezone.now().date() for finding in findings))
 
+    def test_expire_risk_acceptance_verified_not_restored_by_default(self):
+        # Behavioral guard: without restore_verified_expired, reactivating a finding on expiry
+        # must NOT touch its Verified flag. It reactivates but keeps whatever Verified it had.
+        self.test_add_risk_acceptance_multiple_findings_accepted()
+        ra = Risk_Acceptance.objects.last()
+        # restore_verified_expired defaults to False; do not enable it.
+        finding_ids = list(ra.accepted_findings.values_list("id", flat=True))
+        Finding.objects.filter(id__in=finding_ids).update(verified=False)
+
+        self.client.post(reverse("expire_risk_acceptance", args=(1, ra.id)), {"id": ra.id})
+
+        reactivated = Finding.objects.filter(id__in=finding_ids)
+        self.assert_all_active_not_risk_accepted(reactivated)
+        self.assertTrue(
+            all(not finding.verified for finding in reactivated),
+            "Verified must stay unchanged on expiry when restore_verified_expired is off",
+        )
+
+    def test_expire_risk_acceptance_restores_verified_when_enabled(self):
+        # Behavioral guard: with restore_verified_expired on, findings that reactivate on expiry
+        # come back Active AND Verified (the "Active, Verified" state some metrics rely on).
+        self.test_add_risk_acceptance_multiple_findings_accepted()
+        ra = Risk_Acceptance.objects.last()
+        ra.restore_verified_expired = True
+        ra.save()
+        finding_ids = list(ra.accepted_findings.values_list("id", flat=True))
+        Finding.objects.filter(id__in=finding_ids).update(verified=False)
+
+        self.client.post(reverse("expire_risk_acceptance", args=(1, ra.id)), {"id": ra.id})
+
+        reactivated = Finding.objects.filter(id__in=finding_ids)
+        self.assert_all_active_not_risk_accepted(reactivated)
+        self.assertTrue(
+            all(finding.verified for finding in reactivated),
+            "restore_verified_expired must mark reactivated findings Verified",
+        )
+
     def test_reinstate_risk_acceptance_findings_accepted(self):
         # first create an expired risk acceptance
         self.test_expire_risk_acceptance_findings_active()
@@ -285,6 +351,125 @@ class RiskAcceptanceTestUI(DojoTestCase):
 
         ra.refresh_from_db()
         self.assertEqual(ra.expiration_date.date(), requested_expiration_date.date())
+
+    def test_reinstate_leaves_out_a_finding_accepted_in_another_risk_acceptance(self):
+        """
+        A finding accepted again elsewhere after the expiry stays where it is now accepted.
+
+        Reinstating used to keep it in both risk acceptances. Expiring or deleting either one later
+        then cleared the finding's single risk_accepted flag while the other still listed it.
+        """
+        self.test_expire_risk_acceptance_findings_active()
+        expired = Risk_Acceptance.objects.last()
+        moved, *kept = list(expired.accepted_findings.order_by("id"))
+        other = Risk_Acceptance.objects.create(name="Accepted elsewhere", owner=self.get_test_admin())
+        ra_helper.add_findings_to_risk_acceptance(self.get_test_admin(), other, [moved])
+
+        ra_helper.reinstate(expired, expired.expiration_date)
+
+        expired.refresh_from_db()
+        moved.refresh_from_db()
+        self.assertNotIn(moved, expired.accepted_findings.all(), "the moved finding stays out of the reinstated acceptance")
+        self.assertIn(moved, other.accepted_findings.all())
+        self.assertTrue(moved.risk_accepted, "the other acceptance still holds the finding")
+        self.assertFalse(moved.active)
+        self.assertEqual(sorted(f.id for f in kept), sorted(expired.accepted_findings.values_list("id", flat=True)))
+        self.assert_all_inactive_risk_accepted(expired.accepted_findings.all())
+
+    def test_reinstate_leaves_out_a_finding_simply_risk_accepted_since(self):
+        self.test_expire_risk_acceptance_findings_active()
+        expired = Risk_Acceptance.objects.last()
+        moved = expired.accepted_findings.order_by("id").first()
+        product = moved.test.engagement.product
+        product.enable_simple_risk_acceptance = True
+        product.save()
+        ra_helper.simple_risk_accept(self.get_test_admin(), moved)
+
+        ra_helper.reinstate(expired, expired.expiration_date)
+
+        moved.refresh_from_db()
+        self.assertNotIn(moved, expired.accepted_findings.all())
+        self.assertTrue(moved.risk_accepted, "the simple risk acceptance still holds the finding")
+
+    def test_reinstate_keeps_members_an_acceptance_did_not_reactivate(self):
+        """Without reactivate_expired the members stay risk accepted by this acceptance, so none is left out."""
+        self.test_expire_risk_acceptance_findings_not_active()
+        expired = Risk_Acceptance.objects.last()
+        members = sorted(expired.accepted_findings.values_list("id", flat=True))
+
+        ra_helper.reinstate(expired, expired.expiration_date)
+
+        self.assertEqual(members, sorted(expired.accepted_findings.values_list("id", flat=True)))
+        self.assert_all_inactive_risk_accepted(expired.accepted_findings.all())
+
+    def test_reinstate_locks_the_members_before_deciding_which_to_leave_out(self):
+        """
+        Reinstate reads its members under a lock, in its own transaction.
+
+        Another write accepting one of them at the same moment then waits for the reinstate (or the
+        reinstate for it), so the member is either left out or re-accepted, never both.
+        """
+        self.test_expire_risk_acceptance_findings_active()
+        expired = Risk_Acceptance.objects.last()
+        members = set(expired.accepted_findings.values_list("id", flat=True))
+
+        with CaptureQueriesContext(connection) as queries:
+            ra_helper.reinstate(expired, expired.expiration_date)
+
+        locked = set()
+        for query in queries.captured_queries:
+            sql = query["sql"]
+            if "FOR UPDATE" in sql and sql.startswith('SELECT "dojo_finding"'):
+                for ids in re.findall(r'"dojo_finding"\."id" IN \(([^)]*)\)', sql):
+                    locked.update(int(value) for value in ids.split(",") if value.strip())
+        self.assertEqual(members, locked)
+
+    @patch("dojo.risk_acceptance.helper.post_jira_comments")
+    @patch("dojo.risk_acceptance.helper.jira_services")
+    def test_jira_hears_about_an_added_finding_only_after_the_commit(self, jira, comments):
+        """
+        The push and the comment go out once the acceptance is committed, not from inside its transaction.
+
+        The push task re-reads the finding, so sent earlier it could sync the status from before the
+        acceptance; and a caller holding row locks would hold them for every JIRA call.
+        """
+        self.test_add_risk_acceptance_multiple_findings_accepted()
+        ra = Risk_Acceptance.objects.last()
+        finding = Finding.objects.filter(active=True, risk_accepted=False, duplicate=False).exclude(
+            id__in=ra.accepted_findings.values_list("id", flat=True)).first()
+        jira.is_push_all_issues.return_value = True
+        jira.push.reset_mock()
+        comments.reset_mock()
+
+        with self.captureOnCommitCallbacks(execute=False) as callbacks:
+            ra_helper.add_findings_to_risk_acceptance(None, ra, [finding])
+            jira.push.assert_not_called()
+            comments.assert_not_called()
+        for callback in callbacks:
+            callback()
+
+        jira.push.assert_called_once_with(finding)
+        comments.assert_called_once()
+
+    @patch("dojo.risk_acceptance.helper.post_jira_comments")
+    @patch("dojo.risk_acceptance.helper.jira_services")
+    def test_jira_hears_about_a_reinstate_only_after_the_commit(self, jira, comments):
+        """Reinstating pushes the re-accepted members and comments once the reinstate is committed."""
+        self.test_expire_risk_acceptance_findings_active()
+        expired = Risk_Acceptance.objects.last()
+        jira.is_push_all_issues.return_value = True
+        jira.push.reset_mock()
+        comments.reset_mock()
+
+        with self.captureOnCommitCallbacks(execute=False) as callbacks:
+            ra_helper.reinstate(expired, expired.expiration_date)
+            jira.push.assert_not_called()
+            comments.assert_not_called()
+        for callback in callbacks:
+            callback()
+
+        self.assertEqual(jira.push.call_count, expired.accepted_findings.count())
+        comments.assert_called_once()
 
     def test_audit_note_links_to_the_risk_acceptance(self):
         """The note written when a finding is accepted carries a usable link, not empty parens."""

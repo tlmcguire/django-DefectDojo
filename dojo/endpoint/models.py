@@ -14,12 +14,13 @@ from django.db.models import F, Q
 from django.db.models.functions import Lower
 from django.urls import reverse
 from django.utils.translation import gettext as _
-from tagulous.models import TagField
+from django_tagulous.models import TagField
 
 # get_current_date/get_current_datetime/copy_model_util are defined early in dojo.models,
 # before the re-export that loads this module — resolves despite partial circular load.
 # Must keep their dojo.models.* path for Django migration serialization.
 from dojo.models import copy_model_util, get_current_date, get_current_datetime
+from dojo.query_hooks import HookedManager, UnfilteredManager
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +45,17 @@ class Endpoint_Status(models.Model):
     endpoint = models.ForeignKey("dojo.Endpoint", null=False, blank=False, on_delete=models.CASCADE, related_name="status_endpoint")
     finding = models.ForeignKey("dojo.Finding", null=False, blank=False, on_delete=models.CASCADE, related_name="status_finding")
 
+    # Read and written only by plugins; open source never sets them.
+    archived_at = models.DateTimeField(null=True, blank=True, editable=False)
+    archive_batch = models.UUIDField(null=True, blank=True, editable=False)
+
+    # objects is declared first, so it is the default manager; see dojo.query_hooks.
+    objects = HookedManager()
+    unfiltered = UnfilteredManager()
+
     class Meta:
         indexes = [
+            models.Index(fields=["archive_batch"], condition=models.Q(archive_batch__isnull=False), name="dojo_endpstatus_archive_batch"),
             models.Index(fields=["finding", "mitigated"]),
             models.Index(fields=["endpoint", "mitigated"]),
             # Optimize frequent lookups of "active" statuses (mitigated/flags all False)
@@ -101,6 +111,17 @@ class Endpoint_Status(models.Model):
         return max(0, days)
 
 
+class EndpointDeprecatedError(NotImplementedError):
+
+    """
+    Raised when code hydrates an Endpoint while Locations is enabled.
+
+    A subclass rather than a bare NotImplementedError so the api_v2 exception
+    handler can answer the sunset contract for this case alone, and leave a
+    genuine NotImplementedError as the 500 it is.
+    """
+
+
 class Endpoint(models.Model):
     protocol = models.CharField(null=True, blank=True, max_length=20,
                                  help_text=_("The communication protocol/scheme such as 'http', 'ftp', 'dns', etc."))
@@ -130,6 +151,14 @@ class Endpoint(models.Model):
     tags = TagField(blank=True, force_lowercase=True, help_text=_("Add tags that help describe this endpoint. Choose from the list or add new tags. Press Enter key to add."))
     inherited_tags = TagField(blank=True, force_lowercase=True, help_text=_("Internal use tags sepcifically for maintaining parity with product. This field will be present as a subset in the tags field"))
 
+    # Read and written only by plugins; open source never sets them.
+    archived_at = models.DateTimeField(null=True, blank=True, editable=False)
+    archive_batch = models.UUIDField(null=True, blank=True, editable=False)
+
+    # objects is declared first, so it is the default manager; see dojo.query_hooks.
+    objects = HookedManager()
+    unfiltered = UnfilteredManager()
+
     class Meta:
         ordering = ["product", "host", "protocol", "port", "userinfo", "path", "query", "fragment"]
         indexes = [
@@ -157,7 +186,7 @@ class Endpoint(models.Model):
         # migration existing. See dojo/location/feature.py and pro/features/relabel.py:14-28.
         if settings.V3_FEATURE_LOCATIONS and not getattr(self, "_allow_v3_init", False):
             msg = "Endpoint model is deprecated when V3_FEATURE_LOCATIONS is enabled"
-            raise NotImplementedError(msg)
+            raise EndpointDeprecatedError(msg)
         super().__init__(*args, **kwargs)
 
     def __hash__(self):
@@ -227,6 +256,11 @@ class Endpoint(models.Model):
 
     def get_absolute_url(self):
         return reverse("view_endpoint", args=[str(self.id)])
+
+    @property
+    def readable_tags(self):
+        """Mirror of ``Location.readable_tags``. An Endpoint belongs to one product, so all of them."""
+        return list(self.tags.all())
 
     @classmethod
     @contextlib.contextmanager

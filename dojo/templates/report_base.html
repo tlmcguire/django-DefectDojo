@@ -4,9 +4,18 @@
 <head>
     <meta charset="UTF-8">
     <title>{{ report_name }}</title>
-    <link rel="stylesheet" href="{% static "dojo/css/bootswatch/yeti/bootstrap.min.css" %}">
+    <!-- Same compiled stylesheet the app shell uses, so reports pick up the
+         component styles (panels, grid, tables) from one place rather than a
+         vendored Bootstrap build. -->
+    <link rel="stylesheet" href="{% static "dojo/css/tailwind-out.css" %}">
     <!-- Custom Fonts -->
-    <link href="{% static "font-awesome/css/font-awesome.min.css" %}" rel="stylesheet" type="text/css">
+    <!-- Font Awesome 6, same as the app shell. The report templates use v6
+         class names (fa-solid), which the v4 build previously linked here does
+         not define -- that is the "icons don't work in the report template"
+         the report templates carry comments about. -->
+    <link href="{% static 'fontawesomefree/css/fontawesome.min.css' %}" rel="stylesheet" type="text/css">
+    <link href="{% static 'fontawesomefree/css/solid.min.css' %}" rel="stylesheet" type="text/css">
+    <link href="{% static 'fontawesomefree/css/brands.min.css' %}" rel="stylesheet" type="text/css">
 
     <style type="text/css">
         @import url(https://fonts.googleapis.com/css?family=Roboto+Slab:400,700);
@@ -64,24 +73,36 @@
             color: black !important;
         }
 
+        /* Severity tags: tint, ink and a ring in the same hue, matching the
+           app. Literal hexes so the printed report needs no stylesheet tokens. */
         .severity-Info {
-            background-color: #888888 !important;
+            background-color: #f3f4f6 !important;
+            color: #374151 !important;
+            border: 1px solid #a3a7ae;
         }
 
         .severity-Low {
-            background-color: #337ab7 !important;
+            background-color: #dfe9f6 !important;
+            color: #234d93 !important;
+            border: 1px solid #8ca2c8;
         }
 
         .severity-Medium {
-            background-color: #FBE413 !important;
+            background-color: #fef9c3 !important;
+            color: #a16207 !important;
+            border: 1px solid #d2b066;
         }
 
         .severity-High {
-            background-color: #f09835 !important;
+            background-color: #ffedd5 !important;
+            color: #c2410c !important;
+            border: 1px solid #e59a70;
         }
 
         .severity-Critical {
-            background-color: #d9534f !important;
+            background-color: #fbdddd !important;
+            color: #b3261e !important;
+            border: 1px solid #da8780;
         }
 
         .panel-heading {
@@ -114,6 +135,13 @@
             font-size: 120%;
             border-bottom: 1px solid black;
             padding-bottom: 8px;
+            /* h6 is the field label in reports ("Description", "Mitigation").
+               The app stylesheet styles h6 as a small uppercase muted label,
+               which is right for the UI but would restyle every field label in
+               a customer-facing report, so opt out of it here. */
+            text-transform: none;
+            letter-spacing: normal;
+            color: inherit;
         }
 
         .panel-heading h6{
@@ -175,6 +203,26 @@
             font-family: 'Roboto Slab', monospace !important;
             font-size: 13px;
         }
+
+        /* That `*` rule sets font-family with !important, which also overrode
+           the icon font on Font Awesome elements and rendered every icon in a
+           report as a missing glyph. Put the icon font back. */
+        .fa, .fa-solid, .fa-regular, .fa-brands,
+        .fa::before, .fa-solid::before, .fa-regular::before, .fa-brands::before {
+            font-family: "Font Awesome 6 Free", "Font Awesome 6 Brands" !important;
+        }
+
+        /* Heading scale. The `*` rule above sets every element to 13px; element
+           selectors outrank it, which is how the headings kept their sizes when
+           a full Bootstrap build was loaded here. The stylesheet now in use
+           resets headings to inherit (in @layer base, which the unlayered `*`
+           rule beats), so the scale has to be stated explicitly or every
+           heading collapses to body size. */
+        h1 { font-size: 36px; }
+        h2 { font-size: 30px; }
+        h3 { font-size: 24px; }
+        h4 { font-size: 18px; }
+        h5 { font-size: 14px; }
 
         .flot-tick-label.tickLabel {
             font-size: 11px;

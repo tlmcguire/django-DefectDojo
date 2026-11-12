@@ -25,13 +25,56 @@ tracking. When there's exploit evidence, the finding shows a **Threat Intelligen
 Beyond the card, the intelligence is a working surface across the app:
 
 * an **Exploit Maturity column** on the findings list — sortable and filterable
-  (for example, "Weaponized or Active only")
-* an **"Urgent & Actively Exploited"** tile on the Priority Layout dashboard, counting
+  (for example, "Weaponized or Active only"). Exploit Maturity is normally set by this
+  feed, but it can also be **set by hand** in the Threat Intelligence panel of the Add and
+  Edit Finding forms — useful when no feed covers a finding (for example, one with no CVE).
+  On a finding that does reference an enriched CVE, the next sync overwrites the hand-set
+  value; see [Editing Findings](/triage_findings/findings_workflows/editing_findings/#edit-finding-form-fields).
+* an **Exploit Evidence filter** on the findings list (**Add Filter > Exploit Evidence**). Pick
+  one or more sources (**Metasploit Module**, **Nuclei Template**, **Exploit-DB Entry**), and it keeps
+  the findings where any of their vulnerability IDs has one of the sources you picked;
+  **Exclude** keeps every other finding. The filter and the Threat Intelligence card can show
+  different things in two cases:
+  * The card and the Exploit Maturity badge describe one vulnerability ID per finding, the one
+    with the strongest evidence, while the filter checks every ID. A finding with several IDs
+    can match **Metasploit Module** through an ID the card does not show, so the card has no
+    Metasploit chip.
+  * The filter reads the current feed, while the badge holds a downgrade for the stability
+    window described under [Trust and score stability](#trust-and-score-stability) (14 days by
+    default). So for the length of that window after a source drops an exploit, the badge and
+    the filter can disagree.
+* an **"Urgent & Actively Exploited"** tile on the Priority Insights dashboard (**Overview > Insights > Priority**), counting
   active Urgent-risk findings with in-the-wild exploitation — clicking through opens the
   exact filtered findings list
 * a **notification event** (`threat_intel_alert`) when an existing finding's CVE gains new
   exploit evidence, such as landing in CISA KEV or gaining a Metasploit module. Upgrades
   only — evidence quietly aging out never notifies.
+
+## Source ratings
+
+Each piece of evidence behind a CVE is rated, so you can judge how far to trust it. The
+**Source Ratings** panel on the finding page, and the **Source Ratings** section of the
+vulnerability's page in the Vulnerability Explorer, list every rated source (a KEV entry, an
+Exploit-DB exploit, a Metasploit module, a Nuclei template, a public proof of concept, a
+vendor security advisory) with:
+
+* its **source reliability**, from A (completely reliable) to F (reliability cannot be
+  judged), and its **information credibility**, from 1 (confirmed by other sources) to 6
+  (truth cannot be judged), on the Admiralty grading scale used in intelligence analysis
+* the **attack surface** it targets: endpoint, identity, cloud, network, web application or
+  supply chain
+* where exploitation could be **detected**: EDR, SIEM or event logs, network monitoring, or
+  nowhere practical
+* the model version that rated it, and when
+
+DefectDojo rates public threat intelligence centrally, when the signed intelligence bundle is
+built, and the ratings ship inside that bundle. Your instance, air-gapped or not, never sends
+anything to a model to get them. Every answer carries a confidence: one below the confidence
+threshold is shown as **Unrated** instead of a guess, and hovering a rating shows what it means
+and how confident it is.
+
+Ratings are informational. They do not change Priority or Risk. The panel stays hidden on a
+finding whose CVE has no rated sources.
 
 ## How it changes scoring
 
@@ -74,6 +117,17 @@ The floor only ever raises — it never moves a finding down, and a finding that
 scores higher on its own is untouched. Because it applies to Priority, the Risk band and
 Risk score follow from it automatically, so every list, filter, chart and SLA calculation
 sees the same consistent number.
+
+Two boundaries worth knowing when you map an internal policy onto the floor:
+
+* The floor is driven by the finding's **exploit-maturity badge**: it applies exactly to
+  findings whose maturity shows **Active in the wild**, and to no others — lower rungs of
+  the evidence ladder (weaponized exploits, PoCs, detection templates) raise the weighted
+  score but never trigger the floor. The Exploit Maturity column on the findings list
+  therefore shows you, at any time, precisely the set of findings the floor governs.
+* The floor responds to exploitation *evidence*, not to probability scores. An EPSS score
+  by itself — however high — does not trigger the floor; EPSS contributes to the weighted
+  Priority calculation instead.
 
 ## Findings without a CVE
 
@@ -124,8 +178,11 @@ except intelligence freshness.
 
 ## Enabling it
 
-The feature ships off by default. Administrators can enable it directly, or first run it
-in **shadow mode** — which computes the would-be scores without changing anything live and
-produces a drift report showing exactly which findings would move — before turning it on.
-Contact support or see the operations runbook for the recommended rollout on large
-instances.
+From release 3.2.200, threat intelligence is on for every instance, with nothing to switch
+on. A self-hosted instance still needs one of the bundle options under
+[Self-hosted deployments](#self-hosted-deployments).
+
+Earlier releases shipped the feature off. On those, administrators can enable it directly, or
+first run it in **shadow mode**, which computes the would-be scores without changing anything
+live and produces a drift report showing exactly which findings would move. Contact support
+for the recommended rollout on large instances, or to switch the feature off.

@@ -1,5 +1,6 @@
 import logging
-from datetime import datetime
+import re
+from datetime import datetime, time
 
 import pghistory
 from dateutil.relativedelta import relativedelta
@@ -37,6 +38,7 @@ from dojo.api_v2 import (
 )
 from dojo.authorization import api_permissions as permissions
 from dojo.authorization.authorization import user_has_permission_or_403
+from dojo.deprecations import get_deprecation
 from dojo.endpoint.ui.views import get_endpoint_ids
 from dojo.engagement.queries import get_authorized_engagements
 from dojo.filters import (
@@ -98,6 +100,9 @@ from dojo.utils import (
 
 logger = logging.getLogger(__name__)
 
+# anything a version string does not need, see DojoSpectacularAPIView._get_filename
+SCHEMA_FILENAME_VERSION_UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9._+-]")
+
 
 labels = get_labels()
 
@@ -148,6 +153,21 @@ class DojoOpenApiJsonRenderer(OpenApiJsonRenderer2):
 class DojoSpectacularAPIView(SpectacularAPIView):
     renderer_classes = [DojoOpenApiJsonRenderer, *SpectacularAPIView.renderer_classes]
 
+    def _get_filename(self, request, version):
+        # The schema download filename is interpolated into the Content-Disposition response
+        # header, and `version` is attacker-controlled (the ?version= query parameter).
+        # drf-spectacular does not sanitize it, so a CR/LF in ?version= makes Django's
+        # HttpResponse raise BadHeaderError: an unauthenticated 500 (and an error report) on
+        # every probe. The header injection never actually succeeds because Django rejects
+        # header values containing CR/LF, but other characters still break the header: a NUL,
+        # or a U+2028/U+0085 that Django MIME-folds onto a new line, makes nginx reject the
+        # response with a 502, and a quote or backslash breaks the quoted filename. Keep only
+        # the characters a real version string uses, so the header is always plain ASCII and
+        # well formed, whatever `version` (or a DRF versioning scheme) produced.
+        if version:
+            version = SCHEMA_FILENAME_VERSION_UNSAFE_CHARS.sub("", str(version))
+        return super()._get_filename(request, version)
+
 
 class DojoModelViewSet(
     viewsets.ModelViewSet,
@@ -166,14 +186,13 @@ class PrefetchDojoModelViewSet(
 
 class DeprecationNoticeMixin:
 
-    deprecated: bool | None = None
-    end_of_life_date: datetime | None = None
+    deprecation: str = ""
 
     def finalize_response(self, request, response, *args, **kwargs):
-        if self.deprecated is not None:
-            response["X-Deprecated"] = self.deprecated
-        if self.end_of_life_date is not None:
-            response["X-End-Of-Life-Date"] = self.end_of_life_date.isoformat()
+        notice = get_deprecation(self.deprecation)
+        if notice is not None and not notice.removed:
+            response["X-Deprecated"] = True
+            response["X-End-Of-Life-Date"] = datetime.combine(notice.removal_date, time.min).isoformat()
         return super().finalize_response(request, response, *args, **kwargs)
 
 
@@ -375,7 +394,7 @@ class ImportScanView(mixins.CreateModelMixin, viewsets.GenericViewSet):
     permission_classes = (IsAuthenticated, permissions.UserHasImportPermission)
 
     def perform_create(self, serializer):
-        auto_create = AutoCreateContextManager()
+        auto_create = AutoCreateContextManager.for_request(self.request)
         # Process the context to make an conversions needed. Catch any exceptions
         # in this case and wrap them in a DRF exception
         try:
@@ -500,7 +519,7 @@ class ReImportScanView(mixins.CreateModelMixin, viewsets.GenericViewSet):
         return get_authorized_tests("import")
 
     def perform_create(self, serializer):
-        auto_create = AutoCreateContextManager()
+        auto_create = AutoCreateContextManager.for_request(self.request)
         # Process the context to make an conversions needed. Catch any exceptions
         # in this case and wrap them in a DRF exception
         try:

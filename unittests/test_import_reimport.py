@@ -401,12 +401,15 @@ class ImportReimportMixin:
         findings = self.get_test_findings_api(test_id)
         self.log_finding_summary_json_api(findings)
 
-        # reimported count must match count in veracode report
-        findings = self.get_test_findings_api(test_id, verified=True)
+        # reimport_scan_with_params() defaults verified=False, and this reimport does not
+        # override it, so the finding this reimport matches-and-closes inline picks up that
+        # explicit False (see process_matched_active_finding's `if self.verified is not
+        # None:`) rather than keeping the True it had from the initial import.
+        findings = self.get_test_findings_api(test_id, verified=False)
         self.assert_finding_count_json(1, findings)
 
-        # inversely, we should see no findings with verified=False
-        findings = self.get_test_findings_api(test_id, verified=False)
+        # inversely, we should see no findings with verified=True
+        findings = self.get_test_findings_api(test_id, verified=True)
         self.assert_finding_count_json(0, findings)
 
         # reimporting the exact same scan shouldn't create any notes, but there will be a new mitigated note
@@ -3105,6 +3108,17 @@ class ImportReimportTestAPI(DojoAPITestCase, ImportReimportMixin):
         if not settings.V3_FEATURE_LOCATIONS:
             return super().db_endpoint_status_count(mitigated=mitigated)
         return self.db_location_status_count(mitigated)
+
+    # Regression: a Generic Findings Import whose component_name exceeded the Finding
+    # column width answered 500 (DataError: value too long for type character varying(500))
+    # instead of a 400 naming the field.
+    def test_import_generic_json_field_longer_than_model_max_length_returns_400(self):
+        fixture = get_unit_tests_scans_path("generic") / "generic_component_name_too_long.json"
+        result = self.import_scan_with_params(fixture, scan_type=self.scan_type_generic, expected_http_status_code=400)
+        message = str(result)
+        self.assertIn("component_name", message, msg=f"expected the field name in the 400 body, got: {message}")
+        persisted = Finding.objects.filter(title="Polyfill Detected").count()
+        self.assertEqual(0, persisted, msg=f"expected no finding persisted from a rejected import, persisted={persisted}")
 
 
 @versioned_fixtures

@@ -1,6 +1,6 @@
 ---
 title: "Custom Fields"
-description: "Define typed custom fields per record type, fill them in on each record, and turn them on as typed table columns"
+description: "Define typed custom fields per record type, fill them in on the forms and on each record, and turn them on as typed table columns"
 audience: pro
 weight: 7
 ---
@@ -10,7 +10,7 @@ free-form key/value metadata, custom fields are **typed and defined up front**: 
 defines each field once (a label, a key, and a data type), and everyone else fills in a value of that
 type on the records they work with.
 
-Custom Fields is turned on per instance from **Settings → Feature Flags → Custom Fields**. Enabling
+Custom Fields is turned on per instance from the **Custom Fields** row on the **Settings > Feature Flags** page. Enabling
 it is one-way, and it replaces the earlier metadata feature: once on, DefectDojo reads and writes
 custom fields everywhere metadata was used, so existing metadata values are no longer shown until you
 convert them. Converting your existing metadata is a separate, optional step you run when you are ready
@@ -30,7 +30,7 @@ Custom fields are available on six record types:
 ## Defining fields
 
 Custom fields are definitions-first: a value can only be filled in for a field that has been defined.
-Superusers define fields under **Settings → Configuration → Custom Fields**. Pick a record type, then
+Superusers define fields under **Settings > Configuration > Custom Fields**. Pick a record type, then
 add the fields that apply to it. Each definition has:
 
 - **Record type**: which of the six record types the field applies to. A field defined for Findings
@@ -42,6 +42,10 @@ add the fields that apply to it. Each definition has:
   suggested automatically from the label and can be edited before you save.
 - **Data type**: one of seven types, which fixes how the value is entered, validated, filtered, and
   sorted.
+- **Required**: whether a value has to be filled in on the record type's create and edit forms. A
+  required field always appears on those forms and cannot be hidden from them.
+- **Allow Other** (Single Select and Multi Select only): whether the field also offers an **Other**
+  choice that takes a typed value. See [The Other choice](#the-other-choice).
 
 ### Data types
 
@@ -59,6 +63,30 @@ For **Single Select** and **Multi Select**, you also supply the list of options 
 field. You can change a field's data type later; existing values are re-evaluated against the new
 type, and any that no longer fit stop being shown as typed values.
 
+### The Other choice
+
+A select field's options do not always cover every answer. Turn on **Allow Other** for the field
+(when you add it, or with the **Other** checkbox in its row) and its dropdown gains an **Other**
+choice after the options you defined. Choosing **Other** shows a text box, and what you type there is
+saved as the field's value:
+
+- On a **Single Select** field, the typed text is the value, in place of an option.
+- On a **Multi Select** field, the typed text is saved alongside any options you picked. Each record
+  holds at most one Other value.
+
+Options match exactly, letter case included: typing `major release` when the field has a `Major
+Release` option saves an Other value, not that option. The typed value is shown, filtered and sorted
+like any other value of the field. When you open a record whose value is not one of the options, the
+editor shows **Other** chosen with the text filled in. Through the API, write the typed text as the
+value itself (`value` for a Single Select field, one entry of `value_options` for a Multi Select
+field).
+
+**Allow Other** cannot be turned off while any record holds an Other value: the change is refused and
+says how many records hold one. Change those records to one of the defined options first, or add their
+typed text to the field's options, which makes it an ordinary option. It is also refused while an
+enabled rule sets the field to a value outside its options, and the message names those rules: update
+or disable them first.
+
 ## Filling in values
 
 Once fields are defined for a record type, fill them in from the record's **⋮ (kebab) menu → Custom
@@ -69,7 +97,27 @@ editor is available on all six record types: Organizations, Assets, Engagements,
 Risk Acceptances.
 
 If no fields are defined for the record type yet, the editor says so, and an administrator can define
-them under **Settings → Configuration → Custom Fields**.
+them under **Settings > Configuration > Custom Fields**.
+
+## Custom fields on the create and edit forms
+
+Custom fields also appear on the create and edit forms for their record type, so a value can be filled
+in while the record is being created rather than only afterwards. Each field uses the same input as the
+typed editor, and is validated the same way when the form is submitted.
+
+By default custom fields appear at the end of the **Optional Fields** section. An administrator can
+change that for each form under **Settings > UI Defaults > Form Configuration**, where every custom
+field is listed alongside the built-in fields and can be moved into the main body of the form, hidden,
+made required for that form, or reordered. See
+[Configuring Forms](../../navigation/pro__form_configuration/) for how those controls work.
+
+A field marked **Required** when it was defined is required on every form for its record type: the form
+cannot be submitted until it has a value, and it cannot be hidden. Form Configuration can additionally
+require a field that was not defined as required, which applies to that one form.
+
+Custom field values are stored separately from the record itself, so they are saved immediately after
+the record is. If a value cannot be saved, the record is still created or updated and a message names
+the fields that were not saved.
 
 ## Showing custom fields on a record's page
 
@@ -87,11 +135,15 @@ Yes/No, text by contains, and select fields by their options. Columns, filters, 
 parameter use the field's **Name**, so sorting a list by a `cost_center` field appears in the URL as
 `o=cost_center`.
 
+A select field that allows Other also gets a **<Label>: Other** filter (Yes or No), which finds the
+records whose value is a typed Other value, or the records whose value is not. Its parameter is the
+field's Name followed by `_other`, for example `reason_other=true`.
+
 ## Moving from the earlier metadata
 
 Enabling the feature does not move any data on its own: it switches Findings and Assets over to the
 typed store, so metadata you entered before is no longer shown until you convert it. When you are ready,
-click **Convert** under **Custom Fields** on the **Settings → Feature Flags** page. It copies existing
+click **Convert** under **Custom Fields** on the **Settings > Feature Flags** page. It copies existing
 Finding and Asset metadata into typed fields with a best-effort data type inferred from the values, runs
 in the background with a progress bar you can watch (and cancel), and is non-destructive: the original
 metadata rows are left in place. The conversion is safe to run again: it never duplicates, and a re-run
@@ -100,8 +152,32 @@ finishes one that was cancelled or interrupted.
 Once the feature is enabled, the legacy metadata endpoints are disabled for findings and assets: the
 `/api/v2/findings/{id}/metadata/` endpoint and the flat `/api/v2/metadata/` endpoint return **404** for
 those owners, and the `finding_meta` / `product_meta` / `asset_meta` fields on the v2 API return empty.
-Read and write custom field values through the `/api/vue/custom_field_values/` API instead. Endpoint and
-Location metadata is unaffected and still lives on the metadata endpoints.
+Read and write custom field values through the **`/api/v2/custom_fields/values/`** endpoint instead, and
+manage the field definitions through **`/api/v2/custom_fields/definitions/`**. Both use standard API-token
+authentication (the same `Authorization: Token <key>` header as the rest of the API) and are listed in the
+v2 Swagger UI under the **Custom Fields** tag. You can read a value wherever you can view its object and
+write one wherever you can edit it, while managing definitions requires the global Custom Field management
+permission. Endpoint and Location metadata is unaffected and still lives on the metadata endpoints.
+
+To list the custom field values on one object, filter the values endpoint by that object's id:
+
+| Object | Query parameter |
+|--------|-----------------|
+| Asset | `?asset={id}` (or `?product={id}`) |
+| Organization | `?organization={id}` (or `?product_type={id}`) |
+| Finding | `?finding={id}` |
+| Engagement | `?engagement={id}` |
+| Test | `?test={id}` |
+| Risk Acceptance | `?risk_acceptance={id}` |
+
+For example, `GET /api/v2/custom_fields/values/?asset=12` returns the custom field values on asset 12. The
+response is paginated like the rest of the API, so follow `next` (or pass `limit` and `offset`) when an object
+has more values than one page holds. Filters combine, so a request only returns values that match all of them,
+and values on an object you cannot view are never returned. An id that is not a whole number returns a **400**.
+
+To list the fields that apply to one object type, filter the definitions endpoint by `entity_type` (`finding`,
+`asset`, `organization`, `engagement`, `test` or `risk_acceptance`; `product` and `product_type` also work),
+for example `/api/v2/custom_fields/definitions/?entity_type=asset`. An unknown type returns a **400**.
 
 Metadata on **Endpoints** and **Locations** is a separate feature and is unchanged: it stays as
 free-form key/value metadata and is not part of the typed custom fields subsystem.

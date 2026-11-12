@@ -3,11 +3,12 @@ import contextlib
 # import the settings file
 from django.conf import settings
 from django.contrib import messages
-from django.urls import NoReverseMatch, reverse
 
+from dojo.announcement.github_star import should_show_github_star_prompt
 from dojo.announcement.os_message import OS_MESSAGE_DISMISSED_KEY, get_os_banner
 from dojo.labels import get_labels
 from dojo.location.feature import locations_enabled
+from dojo.middleware import READ_ONLY_MODE_MESSAGE
 from dojo.models import System_Settings, UserAnnouncement
 
 
@@ -24,9 +25,13 @@ def globalize_vars(request):
         # V3 Feature Flags
         "V3_FEATURE_LOCATIONS": locations_enabled(),
         "SHOW_A11Y_REQUIRED_FIELDS_NOTICE": settings.SHOW_A11Y_REQUIRED_FIELDS_NOTICE,
+        "SHOW_GITHUB_STAR_PROMPT": should_show_github_star_prompt(getattr(request, "user", None)),
     }
 
     additional_banners = []
+
+    if System_Settings.objects.get().read_only_mode:
+        additional_banners.append({"source": "read_only_mode", "message": str(READ_ONLY_MODE_MESSAGE), "style": "warning"})
 
     if (os_banner := get_os_banner()) is not None:
         token = os_banner.get("dismiss_token", "")
@@ -48,35 +53,10 @@ def globalize_vars(request):
         for banner in request.session.pop("_product_banners", []):
             additional_banners.append(banner)
 
-    if _should_show_ui_toggle_banner(request):
-        try:
-            profile_url = reverse("view_profile")
-        except NoReverseMatch:
-            profile_url = ""
-        additional_banners.append({
-            "source": "ui_toggle",
-            "message": "A redesigned UI is available as a beta opt-in. It will become the default on September 8th in the 3.3.0 release.",
-            "style": "info",
-            "url": profile_url,
-            "link_text": "Enable it in your profile.",
-            "expanded_html": None,
-        })
-
     if additional_banners:
         context["additional_banners"] = additional_banners
 
     return context
-
-
-def _should_show_ui_toggle_banner(request):
-    user = getattr(request, "user", None)
-    if user is None or not getattr(user, "is_authenticated", False):
-        return False
-    contact = getattr(user, "usercontactinfo", None)
-    # Show the banner whenever the authenticated user has not opted into the
-    # Tailwind UI — that includes users without a contact info row at all
-    # (those users get the classic UI by default in UIPreferenceLoader).
-    return not (contact is not None and getattr(contact, "ui_use_tailwind", False))
 
 
 def _os_message_dismissed(user, token):

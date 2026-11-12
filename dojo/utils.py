@@ -41,19 +41,21 @@ from dateutil.relativedelta import MO, SU, relativedelta
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.signals import user_logged_in, user_logged_out, user_login_failed
+from django.core.cache import cache
 from django.core.paginator import Paginator
 from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Case, Count, F, IntegerField, Q, Sum, Value, When
 from django.db.models.query import QuerySet
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from django.http import FileResponse, HttpResponseRedirect
+from django.http import FileResponse, Http404, HttpResponseRedirect
 from django.shortcuts import redirect as django_redirect
 from django.urls import get_resolver, reverse
 from django.utils import timezone
 from django.utils.html import escape, format_html
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.translation import gettext as _
+from django.utils.translation import ngettext
 from kombu import Connection
 
 from dojo.celery import app
@@ -88,6 +90,7 @@ from dojo.models import (
     Test_Type,
     User,
 )
+from dojo.site_url import absolute_url, site_url
 
 logger = logging.getLogger(__name__)
 deduplicationLogger = logging.getLogger("dojo.specific-loggers.deduplication")
@@ -228,6 +231,45 @@ def findings_this_period(findings, period_type, stuff, o_stuff, a_stuff):
             a_total,
         ))
         a_stuff.append(a_counts)
+
+
+def _restricted_kinds(restricted):
+    return ", ".join(sorted({str(obj._meta.verbose_name) for obj in restricted}))
+
+
+def restricted_delete_message(err):
+    """
+    A sentence saying why a delete was blocked by dependent rows, for a person to read.
+
+    str() of a RestrictedError is a tuple repr that names every referencing row, so this counts them and names
+    only their kinds (what to reassign).
+    """
+    restricted = list(err.restricted_objects or ())
+    if not restricted:
+        return _("It cannot be deleted while other records still refer to it.")
+    message = ngettext(
+        "It cannot be deleted while %(count)s other record still refers to it.",
+        "It cannot be deleted while %(count)s other records still refer to it.",
+        len(restricted),
+    ) % {"count": len(restricted)}
+    return message + " " + _("Records that refer to it: %(kinds)s.") % {"kinds": _restricted_kinds(restricted)}
+
+
+def restricted_delete_reason(err):
+    """
+    The reason alone, for a warning that already says what cannot be deleted ("User cannot be deleted: ...").
+
+    Counts the referencing rows and names their kinds, as :func:`restricted_delete_message` does.
+    """
+    restricted = list(err.restricted_objects or ())
+    if not restricted:
+        return _("other records still refer to it.")
+    reason = ngettext(
+        "%(count)s other record still refers to it.",
+        "%(count)s other records still refer to it.",
+        len(restricted),
+    ) % {"count": len(restricted)}
+    return reason + " " + _("Records that refer to it: %(kinds)s.") % {"kinds": _restricted_kinds(restricted)}
 
 
 def add_breadcrumb(parent=None,
@@ -1121,8 +1163,45 @@ def grade_product(crit, high, med, low):
     return max(health, 5)
 
 
+def grade_debounce_cache_key(product_id):
+    """The cache key that marks a grade recalculation as already queued for this product."""
+    return f"dojo_product_grade_pending:{product_id}"
+
+
+def schedule_product_grade(product_id, *, force_sync=False):
+    """
+    Queue a recalculation of the product's grade, at most once per debounce window.
+
+    Every finding save used to dispatch its own calculate_grade task, so a bulk operation queued one
+    task per finding for a value that only needs computing once per product per burst; on a large
+    import that was thousands of identical tasks competing with the import itself for the worker
+    pool. Here the first change in a window queues one task with a countdown of
+    PRODUCT_GRADE_DEBOUNCE_SECONDS and later changes in the window do nothing. The task drops the
+    marker as it starts, so a change that lands while it runs queues the follow-up it needs, and the
+    marker expires with the window, so a task the broker never delivered cannot block grading for good.
+
+    Only background dispatch is coalesced. A foreground recalculation (``force_sync``, or a user whose
+    profile blocks background execution) runs right away as before: its caller expects the grade when
+    the call returns, and there is no queue for it to flood. With the LocMem cache (no DD_CACHE_URL)
+    the window is per process, which coalesces less but never loses a recalculation.
+    """
+    from dojo.celery_dispatch import dojo_dispatch_task  # noqa: PLC0415 circular import
+    from dojo.decorators import we_want_async  # noqa: PLC0415 circular import
+
+    if force_sync:
+        return dojo_dispatch_task(calculate_grade, product_id, force_sync=True)
+    window = settings.PRODUCT_GRADE_DEBOUNCE_SECONDS
+    if window <= 0 or not we_want_async(func=calculate_grade):
+        return dojo_dispatch_task(calculate_grade, product_id)
+    if not cache.add(grade_debounce_cache_key(product_id), value=True, timeout=window):
+        logger.debug("grade recalculation for product %s is already queued", product_id)
+        return None
+    return dojo_dispatch_task(calculate_grade, product_id, countdown=window)
+
+
 @app.task
 def calculate_grade(product_id, *args, **kwargs):
+    cache.delete(grade_debounce_cache_key(product_id))
     product = get_object_or_none(Product, id=product_id)
     if not product:
         logger.warning("Product with id %s does not exist, skipping calculate_grade", product_id)
@@ -1178,9 +1257,7 @@ def calculate_grade_internal(product, *args, **kwargs):
 def perform_product_grading(product):
     system_settings = System_Settings.objects.get()
     if system_settings.enable_product_grade:
-        from dojo.celery_dispatch import dojo_dispatch_task  # noqa: PLC0415 circular import
-
-        dojo_dispatch_task(calculate_grade, product.id)
+        schedule_product_grade(product.id)
 
 
 def get_celery_worker_status():
@@ -1430,14 +1507,13 @@ def max_safe(full_list):
 
 
 def get_full_url(relative_url):
-    return f"{get_site_url()}{relative_url}"
+    # Kept for existing callers; dojo.site_url.absolute_url is the helper to use.
+    return absolute_url(relative_url)
 
 
 def get_site_url():
-    if settings.SITE_URL:
-        return settings.SITE_URL
-    logger.warning("SITE URL undefined in settings, full_url cannot be created")
-    return "settings.SITE_URL"
+    # Kept for existing callers; dojo.site_url.site_url is the helper to use.
+    return site_url()
 
 
 @receiver(post_save, sender=User)
@@ -1471,7 +1547,7 @@ def redirect_to_return_url_or_else(request, or_else):
         return redirect(request, return_url.strip())
     if or_else:
         return redirect(request, or_else)
-    messages.add_message(request, messages.ERROR, "Unable to redirect anywhere.", extra_tags="alert-danger")
+    messages.add_message(request, messages.ERROR, _("Unable to redirect anywhere."), extra_tags="alert-danger")
     return redirect(request, request.get_full_path())
 
 
@@ -2041,7 +2117,12 @@ def log_user_login(sender, request, user, **kwargs):
 @receiver(user_logged_out)
 def log_user_logout(sender, request, user, **kwargs):
 
-    logger.info("logout user: %s via ip: %s", user.username, request.META.get("REMOTE_ADDR"))
+    # user can be None: Django's auth.logout() sends user_logged_out with user=None whenever the
+    # request has no authenticated user. This happens on an IdP-initiated SAML single-logout
+    # (POST /saml2/ls/) whose Django session has already expired -- djangosaml2 still calls
+    # auth.logout(request), so the signal fires with no user. Guard so logout cannot 500.
+    username = user.username if user is not None else "<anonymous>"
+    logger.info("logout user: %s via ip: %s", username, request.META.get("REMOTE_ADDR"))
 
 
 @receiver(user_login_failed)
@@ -2269,19 +2350,37 @@ def generate_file_response(file_object: FileUpload) -> FileResponse:
 
     This function assumes all permissions have previously validated/verified
     by the caller of this function.
+
+    The file is read through the field's storage backend (``storage.exists``,
+    ``storage.size`` and ``storage.open``), never through a path built from
+    ``MEDIA_ROOT``, so it works with any configured Django storage backend.
     """
     # Quick check to ensure we have the right type of object
     if not isinstance(file_object, FileUpload):
         msg = f"FileUpload object expected but type <{type(file_object)}> received."
         raise TypeError(msg)
-    # Determine the path of the file on disk within the MEDIA_ROOT
-    file_path = f"{settings.MEDIA_ROOT}/{file_object.file.url.lstrip(settings.MEDIA_URL)}"
+    field_file = file_object.file
+    storage = field_file.storage
+    name = field_file.name
     # Clean the title by removing some problematic characters
     cleaned_file_name = re.sub(r'[<>:"/\\|?*`=\'&%#;]', "-", file_object.title)
-
-    return generate_file_response_from_file_path(
-        file_path, file_name=cleaned_file_name, file_size=file_object.file.size,
+    # The database may reference a file that is no longer present in storage (e.g. media
+    # that was never persisted or was removed out of band). Reading its size in that case
+    # raises a low-level FileNotFoundError that surfaces as an HTTP 500.
+    # Treat a missing file as a 404 so the caller gets a clean "not found" response.
+    if not name or not storage.exists(name):
+        msg = f"File {cleaned_file_name} could not be found on disk"
+        raise Http404(msg)
+    full_file_name = f"{cleaned_file_name}{Path(name).suffix}"
+    response = FileResponse(
+        storage.open(name, "rb"),
+        filename=full_file_name,
+        content_type=mimetypes.guess_type(name)[0] or "application/octet-stream",
     )
+    # Add some important headers
+    response["Content-Disposition"] = f'attachment; filename="{full_file_name}"'
+    response["Content-Length"] = storage.size(name)
+    return response
 
 
 def generate_file_response_from_file_path(
@@ -2290,11 +2389,19 @@ def generate_file_response_from_file_path(
     """Serve an local file in a uniformed way."""
     # Determine the file path
     path = Path(file_path)
-    file_path_without_extension = path.parent / path.stem
+    # Guard against a missing file on disk so callers that pass a raw path (e.g. the
+    # engagement threat model download) also get a clean 404 instead of a low-level
+    # FileNotFoundError bubbling up as an HTTP 500.
+    if not path.is_file():
+        msg = f"File {path.name} could not be found on disk"
+        raise Http404(msg)
     file_extension = path.suffix
-    # Determine the file name if not supplied
+    # Determine the file name if not supplied. path.stem is the final path component
+    # without its extension (the previous Path.rsplit call raised AttributeError, so this
+    # branch — reached e.g. by the engagement threat-model download, which passes no
+    # file_name — always 500'd).
     if file_name is None:
-        file_name = file_path_without_extension.rsplit("/")[-1]
+        file_name = path.stem
     # Determine the file size if not supplied
     if file_size is None:
         file_size = pathlib.Path(file_path).stat().st_size

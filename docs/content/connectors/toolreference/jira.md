@@ -4,19 +4,19 @@ description: "How to set up the Jira Downstream Connector for DefectDojo"
 weight: 82
 audience: pro
 ---
-The Jira integration pushes DefectDojo Findings and Finding Groups to a Jira project as issues, keeps each issue's status in sync with the Finding, and links the Finding back to the created issue. Both Jira **Cloud** and **Data Center / Server** are supported. Jira Service Management is not supported.
+The Jira integration pushes DefectDojo Findings and Finding Groups to a Jira project as issues, keeps each issue's status in sync with the Finding, and links the Finding back to the created issue. With [two-way sync](#two-way-sync), Jira status changes and comments come back to the Finding too. Both Jira **Cloud** and **Data Center / Server** are supported. Jira Service Management is not supported.
 
 ### Choosing an authentication method
 
 Set **Jira Deployment** first, then pick an **Authentication Method**:
 
 **Jira Cloud**
-- **API Token (email + token)** — HTTP Basic auth using an Atlassian account email and an [API token](https://id.atlassian.com/manage-profile/security/api-tokens). Calls go directly to your site URL.
-- **OAuth 2.0 (recommended)** — a one-time browser consent; DefectDojo obtains and refreshes the tokens for you.
+- **API Token (Email + Token)** — HTTP Basic auth using an Atlassian account email and an [API token](https://id.atlassian.com/manage-profile/security/api-tokens). Calls go directly to your site URL.
+- **OAuth 2.0 (Recommended)** — a one-time browser consent; DefectDojo obtains and refreshes the tokens for you.
 - **Service Account Token** — a scoped API token created for an Atlassian [service account](https://support.atlassian.com/user-management/docs/manage-api-tokens-for-service-accounts/).
 
 **Jira Data Center / Server**
-- **Personal Access Token (recommended)**
+- **Personal Access Token (Recommended)**
 - **Username + Password**
 
 > **How Cloud auth reaches Jira:** OAuth 2.0 and Service Account both authenticate as a Bearer token against Atlassian's gateway — `https://api.atlassian.com/ex/jira/{cloudId}` — which is a *different host* than your `https://your-site.atlassian.net` site URL. DefectDojo uses the gateway for every API call but always builds the ticket link shown on a Finding from your **site URL**, so the link a user clicks is a normal, browsable `.../browse/{ISSUE-KEY}` link. (API Token and Data Center auth call the site URL directly, so there is no split.)
@@ -36,7 +36,9 @@ Create a dedicated app in the [Atlassian developer console](https://developer.at
 3. Under **Permissions**, add the **Jira platform REST API** and grant the scopes listed below. Note: `offline_access` is *not* listed here — it is a standard OAuth scope DefectDojo requests in the authorization URL, not something you add on this screen.
 4. Under **Authorization**, next to **OAuth 2.0 (3LO)** click **Configure** and set the **Callback URL** to `https://<your-defectdojo-host>/integrators/jira/oauth/callback` — it must match your DefectDojo site URL exactly. Enabling this is what turns on the authorization-code grant and refresh tokens; skipping it causes the `grant_type is not enabled` / `Client is not allowed to use offline_access` errors.
 5. Copy the **Client ID** and **Client Secret** into the DefectDojo form and **Submit** to save the connection.
-6. Click **Connect with Jira** and approve the consent screen. Atlassian redirects back to DefectDojo, which stores the tokens and resolves your `cloudId` automatically. A "Connected" indicator appears when it succeeds.
+6. Click **Connect With Jira** and approve the consent screen. Atlassian redirects back to DefectDojo, which stores the tokens and resolves your `cloudId` automatically. A "Connected" indicator appears when it succeeds.
+
+If the connection does not complete, DefectDojo says why when Atlassian sends you back: the authorization request expired or was started in another browser (click **Connect With Jira** again), Atlassian refused the authorization code (check the Client ID and Client Secret), access was not granted on the consent screen, or the connector was deleted in the meantime. DefectDojo also checks your permission again when you return, so an account that lost permission to edit Downstream Connectors while the consent screen was open saves nothing.
 
 > The callback host is your DefectDojo `SITE_URL`. Atlassian must be able to redirect the browser there, and the value must match what DefectDojo sends exactly — so use the real hostname your users reach DefectDojo at, not a value only reachable from inside the network.
 
@@ -96,6 +98,19 @@ Statuses vary per project workflow, so these defaults are meant to be edited to 
 - **False Positive Mapping**: `Done`
 - **Risk Accepted Mapping**: `Done`
 
+#### Coming back from Jira
+
+When [two-way sync](#two-way-sync) is on, the status mapping also says what a Jira change means for the Finding. The status lists take Jira's status **category** keys, never status names, and the resolution lists are matched regardless of case:
+
+- **Closing Status Categories**: categories that close the Finding, from `new` (To Do), `indeterminate` (In Progress) and `done`. Default `done`.
+- **Reopening Status Categories**: categories that reopen a closed Finding. Default `new` and `indeterminate`.
+- **False Positive Resolutions**: resolutions that close the Finding as a false positive.
+- **Accepted Risk Resolutions**: resolutions that close the Finding as an accepted risk.
+
+A resolution in neither list closes the Finding as mitigated. Leave a list empty to use the receiver's default. The resolution defaults come from your classic Jira instance when you have exactly one (the migration from classic Jira also copies them onto each migrated mapping). With several classic instances, no defaults are imposed: set the resolutions on each mapping. An issue linked through the classic Jira integration always reads the resolutions of the classic instance configured for its own site, so each classic instance's URL must be its Jira site's base URL.
+
+The form warns when an outbound status would come back as the opposite change, for example when **Active Mapping** names a status in the `done` category, which two-way sync would read as a closure.
+
 ### Custom Fields (optional)
 
 You can map additional Jira fields — for example a required `resolution` on close, or `labels` — in the mapping's **Custom Fields** step. Each custom-field mapping has four parts:
@@ -105,13 +120,58 @@ You can map additional Jira fields — for example a required `resolution` on cl
 - **Vendor Field** — the Jira field to write to. Because DefectDojo can read Jira's field catalog, this is a searchable picker that lists each field by its **display name** and resolves it to the internal id for you — so you select *DD Close Justification* and DefectDojo stores `customfield_10255`. The picker is populated from the connection, so it works once the connection is saved and validated.
 - **Application point** — *when* to send the field: on **ticket creation**, on **every update**, or as part of a specific status **transition** (Active / Closed / False Positive / Risk Accepted). A transition-scoped field is sent as part of that transition's edit — this is how you supply a value Jira only accepts on a transition screen, most commonly a `resolution` your workflow requires when an issue is resolved.
 
+#### Select-list fields
+
+For a Jira select list, type the option name as a static value, for example `High`. DefectDojo reads the field's type from Jira and sends the option in the shape Jira expects. For a multi-select list, separate the options with commas (`team-a, team-b`). You can still enter the JSON Jira accepts, such as `{"id": "10421"}` to pick an option by its id; a JSON value is sent unchanged. A dynamic source that resolves to an option name, such as a Finding's *Severity*, is handled the same way.
+
 ### Ticket Templates (optional)
 
 By default Jira issues use DefectDojo's built-in title and body. To customize them, attach a **Ticket Template** to the mapping in its **Ticket Template** step. A template defines four independently-optional pieces — the **Finding** summary and description, and the **Finding Group** summary and description. Any piece left blank falls back to the built-in default, so you can override just the title, just the body, or all four. Use **Test render** in the template editor to preview the rendered output against sample data — catching mistakes such as unknown placeholders or values that exceed a field's length limit — before saving. If a template is later deleted, the mappings that used it revert to the built-in defaults automatically.
 
+### Push notes as comments (optional)
+
+Turn on **Push Notes as Comments** on the mapping to post new notes on a linked Finding to its Jira issue as comments, made by the connection's account.
+
+- Every public note attached to the Finding is posted, however it was added: the API (`POST /api/v2/findings/{id}/notes/`), the classic UI, the Pro UI, a bulk edit, or closing the Finding with a note.
+- Private notes are never posted.
+- The comment reads `(Author name): note text`. The note is sent in full, up to Jira's comment length limit (a longer one is cut and ends with `[truncated]`).
+- Markdown is converted to Jira formatting. Mentions (`[~accountid:...]`), images and macros are escaped and show as plain text, so a note cannot ping a Jira user.
+- A note on a grouped Finding goes to the Finding Group's issue. The same text is posted to one group issue once within ten minutes, so a bulk action on many members of a group adds one comment, not one per member.
+- A Finding with no issue yet gets no comment: a note never creates an issue.
+- Notes added by Triage Engine rules, including the ones two-way sync adds from Jira comments, are never sent back.
+- Editing or deleting a note does not change the comment.
+
+### Post SLA notifications and risk acceptance changes as comments (optional)
+
+Two more toggles on the mapping post the comments the classic Jira integration posts on its own. Like **Push Notes as Comments**, they are only offered for a connection that accepts comments, and each comment is made by the connection's account.
+
+- **Post SLA Notifications as Comments**: the daily SLA job comments on the issue of each Finding it notifies about, with the notification's title, for example `Finding 123 - SLA pre-breach warning - 3 day(s) left`, `Finding 123 - SLA is breaching today` or `Finding 123 - SLA breached by 2 days! Overdue notice`. The same System Settings that decide the SLA notifications decide the comments, including exponential backoff and the post-breach limit.
+- **Post Risk Acceptance Changes as Comments**: a comment when a Finding is added to a risk acceptance, removed from it, or reinstated with it, and when its risk acceptance is about to expire. When the risk acceptance expires, a comment is posted only if **Reactivate Findings on Expiration** is checked on it, as with classic Jira: an expiry that leaves the Findings risk accepted posts nothing. The text names the risk acceptance and links to it, for example `Risk acceptance [(Accepted for Q3)|https://defectdojo.example.com/...] with 4 findings has expired`. A Finding risk accepted on its own gets `Finding has been risk accepted` or `Finding is no longer risk accepted`.
+
+The text is the one the classic Jira integration posts. A comment only goes to an issue that already exists: these toggles never create an issue. A grouped Finding's comment goes to its Finding Group's issue, and the same text is posted there once within ten minutes, so a risk acceptance covering five members of one group adds one comment. Two-way sync recognizes these comments as DefectDojo's own when they come back from Jira, so they never become notes.
+
+If **Enable SLA Breach Notifications for Jira Findings** is on in System Settings (only Findings linked to a Jira issue are notified), a Finding whose only ticket is on a mapping with **Post SLA Notifications as Comments** on also counts as having an issue, so it is notified and commented.
+
+With classic scopes, posting comments needs no scope beyond `write:jira-work`. With granular scopes, Atlassian's reference for the Add comment operation lists `write:comment:jira` together with the read scopes `read:comment:jira`, `read:comment.property:jira`, `read:group:jira`, `read:project:jira`, `read:project-role:jira`, `read:user:jira` and `read:avatar:jira`. Atlassian changes these lists from time to time, so check its [REST API reference](https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issue-comments/#api-rest-api-2-issue-issueidorkey-comment-post) if a comment fails with a `403` naming a scope.
+
+Posting comments also needs a go-integrators version that provides it. Until one is deployed, each mapping records one integration error saying so, and posting is tried again an hour later.
+
+### Two-way sync
+
+The connector pushes to Jira. To have Jira talk back, open the connection and choose **Turn On Two-Way Sync**. This creates a Triage Engine [webhook receiver](/automation/triage_engine/webhook_receivers/) bound to the connection, and the rule that acts on its deliveries:
+
+- An issue moving into a closed status category closes the linked Finding, as a false positive or an accepted risk when its resolution is in that list.
+- An issue moving back to an open category reopens the Finding.
+- A comment on the issue is added to the Finding as a note, once. Comments DefectDojo posted itself are recognized and skipped.
+
+The receiver's **Setup** tab gives the URL and the steps to create the webhook in Jira. Because the receiver is bound to one connection, two Jira sites with overlapping project keys never touch each other's Findings. A connection has one two-way sync receiver; when somebody else turned it on, the connection shows **Managed by another user**.
+
+If Jira changes do not arrive, see [two-way sync troubleshooting](/connectors/downstream/troubleshooting_jira/#two-way-sync-changes-from-jira-are-not-reaching-findings).
+
 ### How it works
 
-- **Create / Update / Delete:** creating pushes a new issue and records the link on the Finding; updating edits the existing issue; deleting a Finding force-closes its issue (nothing is deleted in Jira). Pushes can be manual ("Push to Integrator") or automatic per the Issue Tracker Assignment.
+- **Create / Update / Delete:** creating pushes a new issue and records the link on the Finding; updating edits the existing issue; deleting a Finding force-closes its issue (nothing is deleted in Jira). Pushes can be manual (**Push to Connector**) or automatic per the Issue Tracker Assignment. A manual push only sends when an Issue Tracker Assignment covers the Finding's (or Finding Group's) Engagement or Asset; otherwise nothing is sent, and DefectDojo says that no connector is assigned.
+- **Comment:** with **Push Notes as Comments** on, a new note on a Finding is added to its issue as a comment. With **Post SLA Notifications as Comments** or **Post Risk Acceptance Changes as Comments** on, the SLA job's notices and risk acceptance changes are added the same way.
 - **Status reconciliation:** after creating (and on every update) DefectDojo reads the issue's current status and, if it differs from the mapped target, finds a single workflow transition that reaches it and applies it. If no such transition exists, the mapping records an error rather than failing silently. Any transition-scoped custom fields are sent with that transition.
 - **Ticket link:** the link surfaced on the Finding is `https://your-site.atlassian.net/browse/{ISSUE-KEY}` — always your public site URL, never the internal gateway.
 - **Token lifecycle (OAuth):** DefectDojo owns the whole flow — it performs the authorization-code exchange, stores the access and refresh tokens, and refreshes on demand before a push, persisting the new refresh token each time (Atlassian rotates it on every refresh).

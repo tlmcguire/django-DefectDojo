@@ -6,7 +6,7 @@ models while using the new URL and LocationFindingReference models underneath.
 """
 import datetime
 
-from django.db.models import OuterRef, Value
+from django.db.models import OuterRef, Prefetch, Subquery, Value
 from django.db.models.functions import Coalesce
 from django_filters import BooleanFilter, CharFilter, NumberFilter
 from django_filters.rest_framework import DjangoFilterBackend, FilterSet
@@ -26,12 +26,18 @@ from rest_framework.viewsets import ReadOnlyModelViewSet
 
 from dojo.api_v2 import serializers
 from dojo.api_v2.prefetch import PrefetchListMixin, PrefetchRetrieveMixin
-from dojo.api_v2.serializers import TagListSerializerField
 from dojo.api_v2.views import report_generate
 from dojo.authorization.api_permissions import check_object_permission
-from dojo.filters import CharFieldFilterANDExpression, CharFieldInFilter, OrderingFilter
-from dojo.location.models import LocationFindingReference, LocationProductReference
+from dojo.filters import OrderingFilter
+from dojo.location.api.tag_filters import (
+    ReadableHasTagsFilter,
+    ReadableTagANDFilter,
+    ReadableTagFilter,
+    ReadableTagInFilter,
+)
+from dojo.location.models import Location, LocationFindingReference, LocationProductReference
 from dojo.location.queries import (
+    annotate_tags_readable,
     authorized_finding_references,
     get_authorized_location_finding_reference,
     get_authorized_location_product_reference,
@@ -63,7 +69,17 @@ class UserHasLocationRefPermission(BasePermission):
     """Permission class for Location(Product|Finding)Reference model access."""
 
     def has_object_permission(self, request, view, obj):
-        # obj is a URL instance, check permission on its location
+        # The viewset rows are LocationProductReference / LocationFindingReference
+        # join rows. The authorization layer resolves products, findings and
+        # locations, but not these join rows, so authorize through the row's
+        # product / finding -- mirroring the native Pro
+        # Location(Product|Finding)ReferencePermission classes. Handing the raw
+        # join row to the authorization layer raised NoAuthorizationImplementedError
+        # (HTTP 500) for every authorized non-superuser reaching a detail route.
+        if isinstance(obj, LocationFindingReference):
+            obj = obj.finding
+        elif isinstance(obj, LocationProductReference):
+            obj = obj.product
         return check_object_permission(
             request,
             obj,
@@ -76,6 +92,10 @@ class UserHasLocationRefPermission(BasePermission):
 ##########
 # Endpoint compatibility
 ##########
+
+# Rows here are LocationProductReference, so tag lookups resolve against location_id.
+_LOCATION = "location_id"
+
 
 class V3EndpointCompatibleFilterSet(FilterSet):
 
@@ -95,12 +115,12 @@ class V3EndpointCompatibleFilterSet(FilterSet):
 
     location_id = NumberFilter(field_name="location__id", lookup_expr="exact")
 
-    tag = CharFilter(field_name="location__tags__name", lookup_expr="icontains", help_text="Tag name contains")
-    tags = CharFieldInFilter(field_name="location__tags__name", lookup_expr="in", help_text="Comma separated list of exact tags (uses OR for multiple values)")
-    tags__and = CharFieldFilterANDExpression(field_name="location__tags__name", help_text="Comma separated list of exact tags to match with an AND expression")
-    not_tag = CharFilter(field_name="location__tags__name", lookup_expr="icontains", help_text="Not Tag name contains", exclude=True)
-    not_tags = CharFieldInFilter(field_name="location__tags__name", lookup_expr="in", help_text="Comma separated list of exact tags not present on model", exclude=True)
-    has_tags = BooleanFilter(field_name="location__tags", lookup_expr="isnull", exclude=True, label="Has tags")
+    tag = ReadableTagFilter(lookup_expr="icontains", location_field=_LOCATION, help_text="Tag name contains")
+    tags = ReadableTagInFilter(location_field=_LOCATION, help_text="Comma separated list of exact tags (uses OR for multiple values)")
+    tags__and = ReadableTagANDFilter(location_field=_LOCATION, help_text="Comma separated list of exact tags to match with an AND expression")
+    not_tag = ReadableTagFilter(lookup_expr="icontains", exclude=True, location_field=_LOCATION, help_text="Not Tag name contains")
+    not_tags = ReadableTagInFilter(exclude=True, location_field=_LOCATION, help_text="Comma separated list of exact tags not present on model")
+    has_tags = ReadableHasTagsFilter(location_field=_LOCATION, label="Has tags")
 
     o = OrderingFilter(
         fields=(
@@ -126,13 +146,16 @@ class V3EndpointCompatibleSerializer(ModelSerializer):
     path = CharField(source="location.url.path")
     query = CharField(source="location.url.query")
     fragment = CharField(source="location.url.fragment")
-    tags = TagListSerializerField(source="location.tags")
+    tags = SerializerMethodField()
     location_id = IntegerField(source="location.id")
     active_finding_count = IntegerField(read_only=True)
 
     class Meta:
         model = LocationProductReference
         exclude = ("location",)
+
+    def get_tags(self, obj: LocationProductReference) -> list[str]:
+        return sorted(tag.name for tag in obj.location.readable_tags)
 
 
 class V3EndpointCompatibleViewSet(PrefetchListMixin, PrefetchRetrieveMixin, viewsets.ReadOnlyModelViewSet):
@@ -163,7 +186,16 @@ class V3EndpointCompatibleViewSet(PrefetchListMixin, PrefetchRetrieveMixin, view
             location__location_type=URL.LOCATION_TYPE,
         ).annotate(
             active_finding_count=Coalesce(active_finding_subquery, Value(0)),
-        ).distinct()
+        ).prefetch_related(
+            # No DISTINCT: nothing here repeats a row (location and URL are one-to-one, the
+            # authorization and tag filters are semi-joins), and a DISTINCT made the pagination
+            # count deduplicate every reference.
+            # The serializer reads location, location.url and the location's readable tags per row.
+            Prefetch(
+                "location",
+                queryset=annotate_tags_readable(Location.objects.select_related("url")).prefetch_related("tags"),
+            ),
+        )
 
     @extend_schema(
         request=serializers.ReportGenerateOptionSerializer,
@@ -245,7 +277,19 @@ class V3EndpointStatusCompatibleFilterSet(FilterSet):
         return queryset.filter(status=FindingLocationStatus.Mitigated, auditor__iexact=value)
 
     def filter_endpoint(self, queryset, name, value):
-        return queryset.filter(location__products__id=value)
+        # The value is an /api/v2/endpoints/ id: one product's reference to a Location. A Location
+        # is shared, so match only against a reference the caller may see, and only the statuses
+        # of that product's findings, as a legacy Endpoint_Status always belonged to its
+        # endpoint's product.
+        reference = get_authorized_location_product_reference(
+            "view", user=getattr(getattr(self, "request", None), "user", None),
+        ).filter(id=value).values("location_id", "product_id").first()
+        if reference is None:
+            return queryset.none()
+        return queryset.filter(
+            location_id=reference["location_id"],
+            finding__test__engagement__product_id=reference["product_id"],
+        )
 
     class Meta:
         model = LocationFindingReference
@@ -267,13 +311,14 @@ class V3EndpointStatusCompatibleSerializer(ModelSerializer):
     risk_accepted = SerializerMethodField()
 
     endpoint = SerializerMethodField()
-    location_id = IntegerField(source="location.id")
+    # The column itself: reading location.id would load each row's Location, one query per row.
+    location_id = IntegerField(read_only=True)
 
     def get_date(self, obj) -> datetime.date | None:
         return obj.created.date() if obj.created else None
 
     def get_mitigated(self, obj) -> bool | None:
-        return obj.created.date() if obj.created else None
+        return obj.status == FindingLocationStatus.Mitigated
 
     def get_mitigated_time(self, obj) -> datetime.datetime | None:
         return obj.audit_time if self.get_mitigated(obj) else None
@@ -291,11 +336,8 @@ class V3EndpointStatusCompatibleSerializer(ModelSerializer):
         return obj.status == FindingLocationStatus.RiskAccepted
 
     def get_endpoint(self, obj) -> int | None:
-        product_ref = LocationProductReference.objects.filter(
-            location=obj.location,
-            product=obj.finding.test.engagement.product,
-        ).first()
-        return product_ref.location.id if product_ref else None
+        # The id /api/v2/endpoints/ lists for this finding's product, annotated by the viewset.
+        return getattr(obj, "endpoint_reference_id", None)
 
     class Meta:
         model = LocationFindingReference
@@ -319,4 +361,14 @@ class V3EndpointStatusCompatibleViewSet(PrefetchListMixin, PrefetchRetrieveMixin
 
     def get_queryset(self):
         """Get authorized URLs using Endpoint authorization logic."""
-        return get_authorized_location_finding_reference("view").filter(location__location_type=URL.LOCATION_TYPE).distinct()
+        # `endpoint` is the product reference /api/v2/endpoints/ lists for the finding's own
+        # product, read once in SQL rather than once per row, and only when the caller may view it.
+        endpoint_reference = get_authorized_location_product_reference("view", user=self.request.user).filter(
+            location=OuterRef("location"),
+            product=OuterRef("finding__test__engagement__product"),
+        ).order_by("id").values("id")[:1]
+        return get_authorized_location_finding_reference("view").filter(
+            location__location_type=URL.LOCATION_TYPE,
+        ).annotate(
+            endpoint_reference_id=Subquery(endpoint_reference),
+        ).distinct()

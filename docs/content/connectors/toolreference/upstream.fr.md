@@ -17,6 +17,8 @@ Lors de la configuration d'un Connecteur pour un outil pris en charge, vous deve
 * **Location** \- un champ qui fait généralement référence à l'URL de votre outil sur votre réseau,
 * **Secret** \- généralement une clé API.
 
+De nombreux outils exposent un seul hôte d'API fixe. Pour ceux\-là, DefectDojo remplit le champ **Location** lorsque vous ajoutez le connecteur, vous n'avez donc pas à copier l'URL depuis cette page. Conservez la valeur proposée. Ne la modifiez que si votre instance utilise un autre hôte, par exemple une installation auto\-hébergée ou une autre région.
+
 Certains outils nécessiteront des champs supplémentaires liés à l'API, en plus de **Location** et **Secret**. Ils peuvent également nécessiter que vous effectuiez des modifications de leur côté pour prendre en charge un Connecteur entrant depuis DefectDojo.
 
 ![image](images/connectors_tool_reference.png)
@@ -32,7 +34,7 @@ La plupart des Connecteurs importent des **constatations** depuis un outil de s�
 * **Discover** et **Sync** réconcilient tous deux la liste des actifs. Les nouveaux actifs apparaissent comme des Enregistrements `NEW` ; une fois mappés (automatiquement, si le mappage automatique est activé), DefectDojo crée le Produit et le regroupe sous un Type de produit dérivé de l'outil — par exemple, l'espace de noms GitLab ou le projet Azure DevOps.
 * Si un actif est ensuite supprimé en amont (par exemple, un dépôt est supprimé), son Enregistrement mappé est marqué `MISSING` lors de la prochaine synchronisation via **Sync**, afin que votre équipe puisse le trier. DefectDojo ne supprime jamais silencieusement un Produit.
 
-Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, Jira Service Management Assets et ServiceNow CMDB sont des Connecteurs d'actifs. runZero est principalement un Connecteur d'actifs, mais peut également importer des vulnérabilités sous forme de constatations. Tous les autres Connecteurs listés ci-dessous importent des constatations.
+Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, Google Cloud, Jira Service Management Assets et ServiceNow CMDB sont des Connecteurs d'actifs. runZero est principalement un Connecteur d'actifs, mais peut également importer des vulnérabilités sous forme de constatations. Tous les autres Connecteurs listés ci-dessous importent des constatations.
 
 # **Connecteurs pris en charge**
 
@@ -66,6 +68,7 @@ Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, Jira Service Management Asse
 - [GitHub](/connectors/toolreference/github/#upstream-connector)
 - [GitHub Advanced Security](/connectors/toolreference/github_advanced_security/)
 - [GitLab](/connectors/toolreference/gitlab/#upstream-connector)
+- [Google Cloud](/connectors/toolreference/google_cloud/)
 - [Google Cloud Security Command Center](/connectors/toolreference/google_cloud_scc/)
 - [Group-IB ASM](/connectors/toolreference/group_ib_asm/)
 - [HackerOne](/connectors/toolreference/hackerone/)
@@ -92,6 +95,7 @@ Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, Jira Service Management Asse
 - [Quay](/connectors/toolreference/quay/)
 - [Rapid7 InsightAppSec](/connectors/toolreference/rapid7_insightappsec/)
 - [Rapid7 InsightVM](/connectors/toolreference/rapid7_insightvm/)
+- [Rapid7 InsightVM - Cloud Instance](/connectors/toolreference/rapid7_insightvm_cloud/)
 - [runZero](/connectors/toolreference/runzero/)
 - [Semgrep](/connectors/toolreference/semgrep/)
 - [ServiceNow CMDB](/connectors/toolreference/servicenow_cmdb/)

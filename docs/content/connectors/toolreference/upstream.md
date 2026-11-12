@@ -17,6 +17,8 @@ When setting up a Connector for a supported tool, you'll need to give DefectDojo
 
 Some tools will require additional API\-related fields beyond **Location** and **Secret**. They may also require you to make changes on their side to accommodate an incoming Connector from DefectDojo.
 
+Many tools serve one fixed API host. For those, DefectDojo fills in **Location** for you when you add the Connector, so you do not have to copy the URL out of this page. Keep the value you are given. Change it only if your instance uses a different host, such as a self\-hosted deployment or a different region.
+
 ![image](images/connectors_tool_reference.png)
 
 Each tool has a different API configuration, and this guide is intended to help you set up the tool's API so that DefectDojo can connect.
@@ -30,7 +32,7 @@ Most Connectors import **findings** from a security tool. **Asset Connectors** w
 * **Discover** and **Sync** both reconcile the asset list. New assets appear as `NEW` Records; once mapped (automatically, if auto-mapping is enabled), DefectDojo creates the Asset and groups it under an Organization derived from the tool — for example, the GitLab namespace or the Azure DevOps project.
 * If an asset is later removed upstream (for example, a repository is deleted), its mapped Record is flagged `MISSING` on the next Sync so your team can triage it. DefectDojo never silently deletes an Asset.
 
-Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, JSM Assets, and ServiceNow CMDB are Asset Connectors. runZero is primarily an Asset Connector but can optionally import vulnerabilities as findings. All other Connectors listed below import findings.
+Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, Google Cloud, JSM Assets, Microsoft Azure, and ServiceNow CMDB are Asset Connectors. runZero is primarily an Asset Connector but can optionally import vulnerabilities as findings. All other Connectors listed below import findings.
 
 # **Supported Connectors**
 
@@ -43,6 +45,7 @@ Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, JSM Assets, and ServiceNow C
 - [Anchore Enterprise](/connectors/toolreference/anchore_enterprise/)
 - [AppCheck](/connectors/toolreference/appcheck/)
 - [Aqua Security](/connectors/toolreference/aqua_security/)
+- [Aqua Supply Chain](/connectors/toolreference/aqua_supply_chain/)
 - [Automox](/connectors/toolreference/automox/)
 - [Azure DevOps](/connectors/toolreference/azure_devops/)
 - [Backstage](/connectors/toolreference/backstage/)
@@ -89,6 +92,7 @@ Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, JSM Assets, and ServiceNow C
 - [GitHub Advanced Security](/connectors/toolreference/github_advanced_security/)
 - [GitLab](/connectors/toolreference/gitlab/#upstream-connector)
 - [Google Artifact Analysis](/connectors/toolreference/google_artifact_analysis/)
+- [Google Cloud](/connectors/toolreference/google_cloud/)
 - [Google Cloud SCC](/connectors/toolreference/google_cloud_scc/)
 - [Group-IB ASM](/connectors/toolreference/group_ib_asm/)
 - [HackerOne](/connectors/toolreference/hackerone/)
@@ -109,6 +113,7 @@ Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, JSM Assets, and ServiceNow C
 - [Kubescape](/connectors/toolreference/kubescape/)
 - [Mend](/connectors/toolreference/mend/)
 - [Lacework / FortiCNAPP](/connectors/toolreference/lacework_forticnapp/)
+- [Microsoft Azure](/connectors/toolreference/azure/)
 - [Microsoft Defender](/connectors/toolreference/microsoft_defender/)
 - [Microsoft Defender for Cloud](/connectors/toolreference/microsoft_defender_for_cloud/)
 - [MobSF](/connectors/toolreference/mobsf/)
@@ -128,10 +133,12 @@ Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, JSM Assets, and ServiceNow C
 - [Promptfoo](/connectors/toolreference/promptfoo/)
 - [Prowler](/connectors/toolreference/prowler/)
 - [Qualys](/connectors/toolreference/qualys/)
+- [Qualys TotalAppSec](/connectors/toolreference/qualys_totalappsec/)
 - [Quay](/connectors/toolreference/quay/)
 - [Qwiet AI](/connectors/toolreference/qwiet_ai/)
 - [Rapid7 InsightAppSec](/connectors/toolreference/rapid7_insightappsec/)
 - [Rapid7 InsightVM](/connectors/toolreference/rapid7_insightvm/)
+- [Rapid7 InsightVM - Cloud Instance](/connectors/toolreference/rapid7_insightvm_cloud/)
 - [Red Hat Satellite](/connectors/toolreference/red_hat_satellite/)
 - [runZero](/connectors/toolreference/runzero/)
 - [Scantist](/connectors/toolreference/scantist/)
@@ -144,6 +151,7 @@ Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, JSM Assets, and ServiceNow C
 - [Socket](/connectors/toolreference/socket/)
 - [Sonatype IQ](/connectors/toolreference/sonatype_iq/)
 - [SOOS](/connectors/toolreference/soos/)
+- [StackHawk](/connectors/toolreference/stackhawk/)
 - [Sysdig Secure](/connectors/toolreference/sysdig_secure/)
 - [Tenable.io](/connectors/toolreference/tenable_io/)
 - [Tenable Web App Scanning](/connectors/toolreference/tenable_web_app_scanning/)

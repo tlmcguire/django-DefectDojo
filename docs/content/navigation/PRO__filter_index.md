@@ -9,9 +9,13 @@ aliases:
 
 Here is a list of filters that can be applied in the DefectDojo Pro UI to sort lists of Findings.  DefectDojo Filters can be used to assist with navigating through lists of Objects, building custom [dashboards](/metrics_reports/dashboards/custom-dashboards/), or creating automation via [Rules Engine](/automation/rules_engine/about).
 
+## Where filters are applied
+
+Every filter below can be set from a column's header or from the filter bar above the Findings list, which shows each active filter as a chip and offers **Add Filter** for the rest. With more than one filter active, the connective between the chips chooses whether a Finding must match **all** of them (the default) or **any** of them. See [Customizing Tables](/navigation/table_customization/) for the bar, the match mode, and the grid view of the list.
+
 ## How date filters are evaluated
 
-Filters that take a date — **Date Created**, **SLA Expiration Date**, **Last Status Update**, **Planned Remediation Date**, and the Jira date filters listed below — offer five operators:
+Filters that take a date (**Date Created**, **SLA Expiration Date**, **Last Status Update**, **Planned Remediation Date**, and the Jira date filters listed below) offer six operators:
 
 | Operator | Matches |
 | --- | --- |
@@ -20,20 +24,68 @@ Filters that take a date — **Date Created**, **SLA Expiration Date**, **Last S
 | **After** | Everything past the start of the named day — so the named day **is** included. |
 | **During** | A start day through an end day, both **inclusive**. |
 | **Within** | A rolling window ending now: Past 7, 14, 30, 90 or 180 Days, or Past Year. |
+| **Full Months** | Whole calendar months before the current one: Last Full Month, or Last 3, 6 or 12 Full Months. The current month is not included, so the window starts on the first day of a month and ends on the last day of the previous month. |
 
 Note that **Before** and **After** are deliberately not mirror images of each other: *Before 8 August* excludes 8 August, while *After 8 August* includes it.
 
 ### Day boundaries and your timezone
 
-**On**, **Before**, **After** and **During** resolve their day boundaries in **your own timezone**, detected from your browser. A date range therefore covers midnight to midnight as *you* experience it, rather than in UTC or in the server's timezone. Two people in different timezones can see slightly different results from the same filter for Findings falling close to a day boundary.
+**On**, **Before**, **After**, **During** and **Full Months** resolve their day boundaries in **your own timezone**, detected from your browser. A date range therefore covers midnight to midnight as *you* experience it, rather than in UTC or in the server's timezone. Two people in different timezones can see slightly different results from the same filter for Findings falling close to a day boundary.
 
 **Within** is unaffected — it is a rolling window measured back from the current moment, so it has no day boundary to resolve.
 
+**Within** or **Full Months**? A rolling window such as Past 180 Days usually starts partway through a month, so a chart grouped by month shows a short first month that reads like a drop. **Full Months** always covers complete months, which suits monthly charts and management reports. On 15 July, for example, Last 6 Full Months covers 1 January through 30 June.
+
 > **Where this does not apply.** Only requests from the Pro UI carry your timezone. Anything that runs without a browser — the `/api/v2` REST API, scheduled reports, and the Rules Engine — falls back to the server's configured timezone (`DD_TIME_ZONE`, `UTC` unless your administrator changed it). If your browser timezone differs from the server's, a scheduled report and an on-screen filter using the same date can return slightly different rows. Exports started from a filtered table in the UI are not affected — they use your timezone, matching what you were looking at.
+
+## Selecting every match in a searchable list filter
+
+List filters whose options come from a search box, such as the Asset and Organization filters on the Findings, Engagements, Tests, and Endpoints tables, can hold thousands of options, so checking them one at a time is not practical. Type a search into the filter, and once the results load, the checkbox beside the search box selects all N matching options, where N is the number of matches (its tooltip shows the count). Checking it filters the table to every option whose name contains the search text (case-insensitive), not just the options loaded on screen.
+
+- The selection appears as a single checked **All matching "text"** row above the options. Clear that row, or the checkbox beside the search box, to go back to picking individual options.
+- While a match selection is active, the individual options are locked, because the selection covers every match rather than a list of picks.
+- The selection is stored as the search text, so a table URL or a saved table preference carries it compactly however many options match.
+- With options picked one by one, the same checkbox clears them all.
+- Options you picked are listed first when you open the filter, so you can see the current selection without scrolling.
+
+## Filtering on a list of values
+
+### In List and Not in List on text filters
+
+Text filters such as **Title**, **Component Name** and **File Path** offer **In List** and **Not in List** next to **Contains**, **Exact** and the other operators. Each value becomes a chip.
+
+- Type a value and press Enter to add it. A comma you type stays part of the value, so a title such as `Outdated OpenSSL, libcrypto` is one value.
+- Paste a list to add many at once. A single line is split at its commas, and a value in double quotes keeps its commas. Several lines, such as a column copied from a spreadsheet, are split at the line breaks, and each line is one value.
+- Case is ignored, and so are spaces around each value. Blank entries are skipped.
+- Each value is matched whole and exactly as written: `api` matches a component named `API` but not one named `api-gateway`, and characters such as `%`, `*` and `^` are not wildcards.
+- **Not in List** keeps Findings that have no value in that field.
+- A list with no values left applies no filter, the same as an empty text box.
+- The list is saved in the table's address and in a saved table preference, so it is still there after a reload or when you return to the table.
+
+### Include and Exclude on multi-select filters
+
+Every multi-select filter has an **Include** / **Exclude** choice at the top. **Include** keeps the rows that match a selected value. **Exclude** keeps every row except those, so "all but these three scanners" is three picks instead of unticking everything else. Rows with no value in that column are kept under **Exclude**. Filters that already offer **Any** / **All**, such as **Status**, do not have this choice.
+
+### Names in the Asset and Organization filters
+
+The Asset and Organization filters on the Findings, Engagements, Tests and Endpoints tables also offer **In List** and **Not in List** in that same choice at the top. Use them for a list of names copied from a ticket or a CMDB export: the names replace the option list as chips, and they work like the text filters above.
+
+- A name matches whatever its case, and a name in digits is still a name: `2024` matches the Asset named `2024`, never the Asset whose ID is 2024.
+- When you paste names, the filter checks them. A name that matches takes the spelling stored in DefectDojo, and one that matches nothing is left out and listed under the box (**Not found: ...**), so a typo can be corrected and added again.
+- Only Assets and Organizations you are allowed to see are matched. A name that belongs to one you cannot see is reported as not found.
+- Picking options and listing names are separate: switching between **Include** / **Exclude** and **In List** / **Not in List** starts the filter afresh, so names and picked options are never combined.
+
+### Long lists
+
+A filter too long for a web address, such as a few thousand pasted Asset names or a long In List, is sent in the body of the request instead, so the table shows the same rows it would for a short filter. This covers every list filter: In List, names, and a large selection under Include or Exclude.
+
+A filter that fits in a web address stays in the page address, so a bookmarked or shared link carries it. A longer one is kept in your browser, and the page address holds a short reference to it (`filter_ref=...`) instead. A reload, or the link opened in another tab of the same browser, brings the filter back. Opened in another browser, or by someone else, the link opens the table without that filter and shows **Filters Not Available**; apply the filter again there.
+
+A text In List takes up to 1,000 values, and the Asset and Organization names filters take up to 5,000 names, the most one paste checks. A longer list is refused with an error rather than shortened.
 
 ## How number filters are evaluated
 
-Numeric filters — including **Age** and **SLA** — offer a match operator alongside the value: **Equals**, **Not Equals**, **Greater Than**, **Greater Than or Equal To**, **Less Than**, **Less Than or Equal To**, **In List**, and **Not In List**. Entering a value without choosing an operator matches on **Equals**.
+Numeric filters — including **Age** and **SLA** — offer a match operator alongside the value: **Equals**, **Not Equals**, **Greater Than**, **Greater Than or Equal To**, **Less Than**, **Less Than or Equal To**, **In List**, and **Not in List**. Entering a value without choosing an operator matches on **Equals**.
 
 ## SLA filters
 
@@ -87,12 +139,14 @@ These fields are set when an issue is created, but can be modified as an issue p
 * [Status](/triage_findings/findings_workflows/finding_status_definitions/)
 * Last Status Update (Timestamp)
 * Mitigated (True or False)
+* Mitigated By (the user who closed the Finding; empty while it is open. The column is hidden by default, turn it on from the column picker)
 
 ##### Additional Model Functions
 These DefectDojo functions can be used to further organize your Findings or track remediation.
 
 * Finding Tags
 * Reviewers (Assigned User)
+* Owner (Team) (the group responsible for the Finding, set under **Owners** on the Finding form; the column is hidden by default, turn it on from the column picker)
 * Has Notes (True/False)
 * Group (refers to the [Finding Group](/triage_findings/findings_workflows/editing_findings/#finding-group-actions), if one exists)
 * Risk Acceptance (select one or more existing Risk Acceptances from the list)

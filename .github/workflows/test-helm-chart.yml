@@ -4,7 +4,6 @@ on:
     branches:
       - master
       - dev
-      - bugfix
       - release/**
       - hotfix/**
 
@@ -13,6 +12,9 @@ permissions:
 
 jobs:
   lint:
+    # Release PRs and merge-backs are merged without waiting for CI. Skip when the
+    # head is release/merge-* AND the PR has release-management.
+    if: ${{ !(startsWith(github.head_ref, 'release/merge-') && contains(github.event.pull_request.labels.*.name, 'release-management')) }}
     name: Lint chart (version)
     runs-on: ubuntu-latest
     steps:
@@ -37,9 +39,9 @@ jobs:
       #        helm dependency update ./helm/defectdojo
 
       - name: Set up chart-testing
-        uses: helm/chart-testing-action@6ec842c01de15ebb84c8627d2744a0c2f2755c9f # v2.8.0
+        uses: helm/chart-testing-action@720270857a28afd41e2426521a7801db09e9b510 # v2.9.0
         with:
-          version: 3.14.0 # renovate: datasource=github-releases depName=helm/chart-testing
+          version: 3.15.0 # renovate: datasource=github-releases depName=helm/chart-testing
           yamale_version: 6.1.0 # renovate: datasource=pypi depName=yamale versioning=semver
           yamllint_version: 1.38.0 # renovate: datasource=pypi depName=yamllint versioning=semver
 
@@ -66,7 +68,7 @@ jobs:
       # x.y.z gets bumped automatically when doing a release
       - name: Run chart-testing (lint)
         run: ct lint --config ct.yaml --target-branch ${{ env.ct-branch }} --check-version-increment=true
-        if: ${{ steps.list_changed.outputs.changed == 'true' && env.ct-branch != 'dev' && env.ct-branch != 'bugfix' }}
+        if: ${{ steps.list_changed.outputs.changed == 'true' && env.ct-branch != 'dev' }}
 
       # run all checks but version increment always when something changed
       - name: Run chart-testing (lint)
@@ -74,7 +76,7 @@ jobs:
         if: steps.list_changed.outputs.changed == 'true'
 
       - name: Check update of "artifacthub.io/changes" HELM annotation
-        if: ${{ steps.list_changed.outputs.changed == 'true' && !(startsWith(github.head_ref, 'master-into-dev/') || startsWith(github.head_ref, 'master-into-bugfix/')) }}
+        if: ${{ steps.list_changed.outputs.changed == 'true' && !startsWith(github.head_ref, 'release/merge-master-into-dev-') }}
         run: |
           # fast fail if `git show` fails
           set -e
@@ -110,6 +112,9 @@ jobs:
       #  if: steps.list_changed.outputs.changed == 'true'
 
   docs_generation:
+    # Release PRs and merge-backs are merged without waiting for CI. Skip when the
+    # head is release/merge-* AND the PR has release-management.
+    if: ${{ !(startsWith(github.head_ref, 'release/merge-') && contains(github.event.pull_request.labels.*.name, 'release-management')) }}
     name: Update documentation
     runs-on: ubuntu-latest
     permissions:
@@ -134,14 +139,14 @@ jobs:
           git commit -m "ci: update Chart annotations from PR #${{ github.event.pull_request.number }}" || echo "No changes to commit"
 
       - name: Run helm-docs (update)
-        uses: losisin/helm-docs-github-action@3a4528e97c49a5e83de6b78c50c61c8ee5c9f944 # v2
+        uses: losisin/helm-docs-github-action@9e0787c426fdec38be6288bb5c0559dcb388412c # v2
         if: github.actor == 'renovate[bot]' || github.actor == 'dependabot[bot]'
         with:
           chart-search-root: "helm/defectdojo"
           git-push: true
 
       - name: Run helm-docs (check)
-        uses: losisin/helm-docs-github-action@3a4528e97c49a5e83de6b78c50c61c8ee5c9f944 # v2
+        uses: losisin/helm-docs-github-action@9e0787c426fdec38be6288bb5c0559dcb388412c # v2
         if: ${{ !(github.actor == 'renovate[bot]' || github.actor == 'dependabot[bot]') }}
         with:
           fail-on-diff: true
@@ -153,6 +158,9 @@ jobs:
           echo "Your HELM chart changed but you haven't adjusted documentation. Check https://github.com/defectdojo/django-DefectDojo/tree/master/helm/defectdojo#helm-docs-update for more information."
 
   generate_schema:
+    # Release PRs and merge-backs are merged without waiting for CI. Skip when the
+    # head is release/merge-* AND the PR has release-management.
+    if: ${{ !(startsWith(github.head_ref, 'release/merge-') && contains(github.event.pull_request.labels.*.name, 'release-management')) }}
     name: Update schema
     runs-on: ubuntu-latest
     steps:
@@ -160,7 +168,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Generate values schema json
-        uses: losisin/helm-values-schema-json-action@9f555986124362af978a9861cf0f81e1956300ad # v3
+        uses: losisin/helm-values-schema-json-action@9ed68d9d464a5e6f7f5fc1f3dc071828cf7d13a2 # v3
         with:
           fail-on-diff: true
           working-directory: "helm/defectdojo"
@@ -173,6 +181,9 @@ jobs:
           echo "Your HELM chart changed but you haven't adjusted schema. Check https://github.com/defectdojo/django-DefectDojo/tree/master/helm/defectdojo#helm-schema-update for more information."
 
   lint_format:
+    # Release PRs and merge-backs are merged without waiting for CI. Skip when the
+    # head is release/merge-* AND the PR has release-management.
+    if: ${{ !(startsWith(github.head_ref, 'release/merge-') && contains(github.event.pull_request.labels.*.name, 'release-management')) }}
     name: Lint chart (format)
     runs-on: ubuntu-latest
     steps:
@@ -195,6 +206,9 @@ jobs:
           helm lint ./helm/defectdojo --strict
 
   artifacthub_linter:
+    # Release PRs and merge-backs are merged without waiting for CI. Skip when the
+    # head is release/merge-* AND the PR has release-management.
+    if: ${{ !(startsWith(github.head_ref, 'release/merge-') && contains(github.event.pull_request.labels.*.name, 'release-management')) }}
     name: Artifacthub Lint
     runs-on: ubuntu-latest
     steps:

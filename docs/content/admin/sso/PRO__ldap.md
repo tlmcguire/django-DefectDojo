@@ -1,7 +1,7 @@
 ---
 title: "LDAP Authentication"
 description: "Configure LDAP authentication in DefectDojo Pro"
-weight: 20
+weight: 130
 audience: pro
 aliases:
   - "/admin/sso/os__ldap/"
@@ -9,7 +9,7 @@ aliases:
   - /en/open_source/ldap-authentication
 ---
 
-DefectDojo Pro supports LDAP authentication from the **Enterprise Settings** UI — no custom
+DefectDojo Pro supports LDAP authentication from **Connect > Authorization > Providers** — no custom
 Docker images or configuration files are required.
 
 Unlike the other providers on this page, LDAP is not a redirect-based flow. Users sign in
@@ -18,7 +18,7 @@ against your directory. There is no extra login button.
 
 ## Configuration
 
-Open **Enterprise Settings > LDAP Settings**.
+Open **Connect > Authorization > Providers** and select **LDAP**.
 
 ![image](images/sso_ldap_settings.png)
 

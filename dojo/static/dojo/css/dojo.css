@@ -29,30 +29,30 @@
 }
 
 a {
-  color: var(--color-dd-primary-500);
+  color: var(--color-dd-interactive-700);
 }
 
-/* Panel-default btn-primary: use brand blue (not transparent ghost) */
+/* Panel-default btn-primary: the solid brand orange (not a transparent ghost) */
 .panel-default .btn-primary {
-    background-color: var(--color-dd-primary-500, #1779C5);
-    color: #fff;
-    border: 1px solid var(--color-dd-primary-500, #1779C5);
+    background-color: var(--color-dd-primary-700, #cc3a00);
+    color: var(--color-dd-on-primary, #fff8f0);
+    border: 1px solid var(--color-dd-primary-700, #cc3a00);
 }
 
 .panel-default .btn-primary:hover {
-    background-color: var(--color-dd-primary-700, #204D87);
-    color: #fff;
-    border: 1px solid var(--color-dd-primary-700, #204D87);
+    background-color: var(--color-dd-primary-800, #a62f00);
+    color: var(--color-dd-on-primary, #fff8f0);
+    border: 1px solid var(--color-dd-primary-800, #a62f00);
 }
 
 .btn-primary {
-    color: #fff;
-    background-color: var(--color-dd-primary-500);
+    color: var(--color-dd-on-primary, #fff8f0);
+    background-color: var(--color-dd-primary-700);
 	  /*border-style: none!important;*/
 }
 
 .btn-primary:hover {
-    background-color: var(--color-dd-primary-700);
+    background-color: var(--color-dd-primary-800);
 }
 
 /* btn-secondary handled in Tailwind components layer */
@@ -63,7 +63,7 @@ a {
 }
 
 #base-content .clearfix .pagination .dropdown-toggle:focus {
-    outline: 5px auto #599fd0;
+    outline: 5px auto #005f73;
     outline-offset: -3px;
 }
 .table-responsive .dropdown-toggle:focus {
@@ -74,7 +74,7 @@ a {
 /* Removed: commented-out btn-primary state overrides (dead code) */
 
 .secondary-color {
-  background-color: var(--color-dd-primary-600);
+  background-color: var(--color-dd-interactive-700);
   color: white;
 }
 
@@ -102,11 +102,11 @@ h3 {
 
 .nav-tabs .dropdown .badge{
     color: #fff;
-    background-color: var(--color-dd-primary-500);
+    background-color: var(--color-dd-interactive-700);
 }
 
 .nav-tabs .active-color .badge{
-    color: var(--color-dd-primary-500);
+    color: var(--color-dd-interactive-700);
     background-color: #ffffff;
 }
 
@@ -114,6 +114,16 @@ h3 {
 
 .row {
     margin-top: 5px;
+}
+
+/* A row of cards is spaced by the cards' own bottom margin; the extra
+   row offset above would make the gap between card rows uneven. */
+.row:has(> :is(.panel, .card, .stat-card, .row):first-child),
+.row:has(> [class*="col-"] > :is(.panel, .card, .stat-card, .row):first-child) {
+    margin-top: 0;
+    /* Cards that wrap onto another line are spaced by their own margin;
+       the grid's row gap on top of it would double the space. */
+    row-gap: 0;
 }
 
 form.filters {
@@ -196,7 +206,7 @@ body #header form#api_selector .input input#input_apiKey {
 }
 
 .badge.badge-count {
-    background-color: #d9534f;
+    background-color: var(--color-badge-count, #b3261e);
 }
 
 .badge.badge-count.badge-count0 {
@@ -492,45 +502,60 @@ form ul#id_accepted_findings input {
     background-color: #468847;
 }
 
+/* Severity tags: the tint with its own ink, ringed in the same hue (the
+   currentColor ring). */
 .severity {
     font-size: 80%;
-    color: #fff;
+    color: var(--color-text);
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, currentColor 55%, transparent);
 }
 
 .severity-Info {
-    background-color: #888888;
+    background-color: var(--color-severity-info-bg);
+    color: var(--color-severity-info-text);
 }
 
 .severity-Low {
-    background-color: #546474;
+    background-color: var(--color-severity-low-bg);
+    color: var(--color-severity-low-text);
 }
 
 .severity-Medium {
-    background-color: #FBE413;
+    background-color: var(--color-severity-medium-bg);
+    color: var(--color-severity-medium-text);
 }
 
 .severity-High {
-    background-color: #f09835;
+    background-color: var(--color-severity-high-bg);
+    color: var(--color-severity-high-text);
 }
 
 .severity-Critical {
-    background-color: #d9534f;
+    background-color: var(--color-severity-critical-bg);
+    color: var(--color-severity-critical-text);
 }
 
+/* SLA badges: the same tint, ink and ring as the severity tags. Green is
+   inside the SLA, red is overdue, orange is remediated late, blue is
+   remediated on time. */
 .age-red {
-    background-color: #d9534f;
+    background-color: var(--color-severity-critical-bg);
+    color: var(--color-severity-critical-text);
 }
 
 .age-green {
-    background-color: green;
+    background-color: var(--color-green-100);
+    color: var(--color-green-800);
 }
 
 .age-blue {
-    background-color: blue;
+    background-color: var(--color-severity-low-bg);
+    color: var(--color-severity-low-text);
 }
 
 .age-orange {
-    background-color: #EE7600;
+    background-color: var(--color-severity-high-bg);
+    color: var(--color-severity-high-text);
 }
 
 .dojo-search {
@@ -542,9 +567,10 @@ form ul#id_accepted_findings input {
 
 /* Removed: .pagination base rules — now in tailwind.css */
 
+/* Inside a card, the count / page size row shares the card's 1.25rem inset. */
 .pagination-in-panel {
-    margin-left: 10px;
-    margin-right: 10px;
+    margin: 0;
+    padding: 0.75rem 1.25rem 0;
 }
 
 #risk_acceptance table form {
@@ -620,101 +646,473 @@ input#simple_search {
     width: 100%;
 }
 
-.support-page-wrapper {
+/* ============================================================
+   Support page (dojo/templates/dojo/support.html)
+   Community help on light cards, DefectDojo Pro on a Midnight band
+   that matches the Pro UI shown in the screenshot.
+   ============================================================ */
+.sp {
+    --sp-midnight: #003038;
+    --sp-midnight-deep: #001a1f;
+    --sp-on-dark: #fff8f0;
+    --sp-on-dark-muted: #a7d4dc;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 8px 8px 48px;
+    color: var(--color-text);
+}
+
+.sp a,
+.sp a:hover,
+.sp a:focus {
+    text-decoration: none;
+}
+
+.sp a:focus-visible {
+    outline: 2px solid var(--color-dd-interactive-500);
+    outline-offset: 2px;
+}
+
+/* ---------- Header ---------- */
+.sp-header {
+    text-align: center;
+    padding: 16px 0 8px;
+}
+
+.sp .sp-title {
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--color-text);
+    margin: 0 0 12px;
+}
+
+.sp-lede {
+    max-width: 720px;
+    margin: 0 auto 20px;
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    color: var(--color-text-muted);
+}
+
+.sp-jump {
     display: flex;
-    flex-flow: column;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+}
+
+.sp-jump a {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: var(--color-surface);
+    color: var(--color-text-muted);
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.sp-jump a:hover {
+    color: var(--color-dd-interactive-700);
+    border-color: var(--color-dd-interactive-300);
+}
+
+/* ---------- Sections ---------- */
+.sp-section {
+    margin-top: 40px;
+    scroll-margin-top: 80px;
+}
+
+.sp-section-head {
+    margin-bottom: 16px;
+}
+
+.sp .sp-section-head h2 {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    font-size: 1.375rem;
+    font-weight: 700;
+    color: var(--color-text);
+    margin: 0 0 4px;
+}
+
+.sp-section-head p {
+    margin: 0;
+    color: var(--color-text-muted);
+}
+
+.sp-pill {
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: var(--color-green-100);
+    color: var(--color-green-800);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.sp-card-title {
+    display: block;
+    font-weight: 600;
+    font-size: 1rem;
+}
+
+.sp-card-text {
+    display: block;
+    margin-top: 4px;
+    font-size: 0.875rem;
+    line-height: 1.5;
+}
+
+/* ---------- Community ---------- */
+.sp-community {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: 16px;
+}
+
+.sp a.sp-slack {
+    display: flex;
+    gap: 16px;
+    padding: 24px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, var(--color-dd-interactive-700), var(--color-dd-interactive-900));
+    color: var(--sp-on-dark);
+    transition: transform .2s, box-shadow .2s;
+}
+
+.sp a.sp-slack:hover {
+    color: var(--sp-on-dark);
+    transform: translateY(-2px);
+    box-shadow: 0 10px 24px rgba(0, 57, 71, 0.25);
+}
+
+.sp-slack-icon {
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.12);
+    font-size: 1.5rem;
+}
+
+.sp-slack-body {
+    min-width: 0;
+}
+
+.sp-slack .sp-card-title {
+    font-size: 1.125rem;
+}
+
+.sp-slack .sp-card-text {
+    color: var(--color-dd-interactive-100);
+}
+
+.sp-slack-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    padding: 8px 16px;
+    border-radius: 6px;
+    background: var(--sp-on-dark);
+    color: var(--color-dd-interactive-800);
+    font-weight: 600;
+    font-size: 0.9375rem;
+}
+
+.sp-links {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.sp a.sp-link {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 18px;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: var(--color-surface);
+    color: var(--color-text);
+    transition: border-color .2s, transform .2s, box-shadow .2s;
+}
+
+.sp a.sp-link:hover {
+    color: var(--color-text);
+    border-color: var(--color-dd-interactive-300);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 48, 56, 0.08);
+}
+
+.sp a.sp-link > span {
+    min-width: 0;
+}
+
+.sp-link .sp-card-text {
+    color: var(--color-text-muted);
+}
+
+.sp-link-icon {
+    flex: 0 0 auto;
+    width: 24px;
+    margin-top: 2px;
+    text-align: center;
+    font-size: 1.25rem;
+    color: var(--color-dd-interactive-700);
+}
+
+/* ---------- DefectDojo Pro ---------- */
+.sp-pro {
+    margin-top: 48px;
+    padding: 40px;
+    border-radius: 16px;
+    background:
+        radial-gradient(1200px 400px at 85% 0%, rgba(255, 107, 53, 0.12), transparent 60%),
+        linear-gradient(180deg, var(--sp-midnight), var(--sp-midnight-deep));
+    color: var(--sp-on-dark);
+    scroll-margin-top: 80px;
+}
+
+.sp-pro-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+    gap: 40px;
     align-items: center;
 }
 
-.support-container {
-    display: flex;
-    width: 75%;
-    margin-bottom: 150px;
+.sp .sp-eyebrow {
+    margin: 0 0 8px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-dd-primary-400);
 }
 
-.support-box {
+.sp .sp-pro-copy h2 {
+    font-size: 1.875rem;
+    line-height: 1.2;
+    font-weight: 700;
+    color: var(--sp-on-dark);
+    margin: 0 0 14px;
+}
+
+.sp .sp-pro-copy p {
+    color: var(--sp-on-dark-muted);
+    line-height: 1.6;
+}
+
+.sp-pro-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.sp a.sp-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 0.9375rem;
+    transition: background-color .2s, border-color .2s;
+}
+
+.sp a.sp-btn-primary {
+    background: var(--color-dd-primary-700);
+    color: var(--color-dd-on-primary);
+}
+
+.sp a.sp-btn-primary:hover {
+    background: var(--color-dd-primary-800);
+    color: var(--color-dd-on-primary);
+}
+
+.sp a.sp-btn-ghost {
+    border: 1px solid rgba(255, 248, 240, 0.35);
+    color: var(--sp-on-dark);
+}
+
+.sp a.sp-btn-ghost:hover {
+    border-color: var(--sp-on-dark);
+    color: var(--sp-on-dark);
+}
+
+.sp-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    margin: 28px 0 0;
+    padding-top: 20px;
+    border-top: 1px solid rgba(255, 248, 240, 0.12);
+}
+
+.sp-stats dt {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--sp-on-dark);
+}
+
+.sp-stats dd {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--sp-on-dark-muted);
+}
+
+.sp-shot {
+    margin: 0;
+}
+
+.sp-shot img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 248, 240, 0.15);
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+}
+
+.sp-shot figcaption {
+    margin-top: 10px;
+    font-size: 0.8125rem;
+    color: var(--sp-on-dark-muted);
+    text-align: center;
+}
+
+.sp-features {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 40px;
+}
+
+.sp-feature {
     display: flex;
     flex-direction: column;
-    justify-content: flex-start;
-    flex: 1;
-    font-size: 16px;
-    font-weight: 500;
-}
-
-.support-box.shape {
+    padding: 20px;
+    border: 1px solid rgba(255, 248, 240, 0.1);
     border-radius: 12px;
-    padding: 10px 25px 25px 25px;
-    margin: 0px 10px 0px 10px;
-    transition: transform .5s;
+    background: rgba(255, 255, 255, 0.04);
+    transition: border-color .2s, background-color .2s;
 }
 
-.community {
-    color: var(--color-text);
-    background-color: var(--color-surface-3);
+.sp-feature:hover {
+    border-color: rgba(255, 138, 92, 0.5);
+    background: rgba(255, 255, 255, 0.06);
 }
 
-.community h2,
-.community p {
-    color: inherit;
+.sp-feature-icon {
+    font-size: 1.25rem;
+    color: var(--color-dd-primary-400);
+    margin-bottom: 12px;
 }
 
-.commercial {
-    color: #e7e7e7;
-    background-color: #1d4565;
+.sp .sp-feature h3 {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--sp-on-dark);
+    margin: 0 0 6px;
 }
 
-/* Override Tailwind's explicit h2/p color inside dark commercial box */
-.commercial h2,
-.commercial p,
-.commercial i {
-    color: inherit;
+.sp .sp-feature p {
+    margin: 0;
+    font-size: 0.875rem;
+    line-height: 1.55;
+    color: var(--sp-on-dark-muted);
 }
 
-.support-box.hover:hover {
-    transform: translateY(-10px);
+.sp .sp-feature p.sp-oss {
+    margin-top: auto;
+    padding-top: 12px;
+    font-size: 0.75rem;
+    color: #9fb3b2;
 }
 
-/* Support page responsive: stack boxes on mobile/tablet */
+.sp-feature p:first-of-type {
+    margin-bottom: 12px;
+}
+
+.sp-pro-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 32px;
+    padding-top: 24px;
+    border-top: 1px solid rgba(255, 248, 240, 0.12);
+}
+
+.sp .sp-pro-footer p {
+    margin: 0;
+    color: var(--sp-on-dark-muted);
+}
+
+.sp .sp-pro-footer p a {
+    margin-left: 6px;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    color: var(--color-dd-primary-300);
+    font-weight: 600;
+}
+
+.sp .sp-pro-footer p a:hover {
+    color: var(--color-dd-primary-200);
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 1100px) {
+    .sp-community,
+    .sp-pro-hero {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .sp-features {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
 @media (max-width: 768px) {
-    .support-container {
+    .sp-links,
+    .sp-features {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .sp-pro {
+        padding: 24px 16px;
+    }
+    .sp .sp-title {
+        font-size: 1.625rem;
+    }
+    .sp a.sp-slack {
         flex-direction: column;
-        width: 100%;
-    }
-    .support-box.shape {
-        margin: 0 0 1rem 0;
     }
 }
 
-.btn-primary.support {
-    font-size: 16px;
-    font-weight: 500;
-    padding: 10px;
-    border-radius: 6px;
-    margin: 20px 10px 0px 10px;
-    border: none;
-}
-
-.btn-primary.support.dark:hover {
-    color: var(--color-text-muted);
-    background-color: var(--color-surface-2);
-}
-
-.btn-primary.support.light:hover {
-    color: #e7e7e7;
-    background-color: #235175;
+@media (prefers-reduced-motion: reduce) {
+    .sp a.sp-slack,
+    .sp a.sp-link {
+        transition: none;
+    }
+    .sp a.sp-slack:hover,
+    .sp a.sp-link:hover {
+        transform: none;
+    }
 }
 
 .divider {
     border-bottom: 1px solid;
     margin: 10px 25px 15px 25px;
-}
-
-.divider.dark {
-    border-color: var(--color-text-muted);
-}
-
-.divider.light {
-    border-color: #e7e7e7;
 }
 
 .dojo-modals-wrapper {
@@ -821,19 +1219,19 @@ table.centered td {
 }
 
 .text-critical {
-    color: #d9534f
+    color: var(--color-severity-critical-text)
 }
 
 .text-high {
-    color: #f0ad4e
+    color: var(--color-severity-high-text)
 }
 
 .text-medium {
-    color: #f0de28
+    color: var(--color-severity-medium-text)
 }
 
 .text-low {
-    color: var(--color-severity-low)
+    color: var(--color-severity-low-text)
 }
 
 input[type="checkbox"] {
@@ -1025,6 +1423,27 @@ span.endpoint_product {
     margin-top: 8px;
 }
 
+/* The base CSS reset zeroes list markers and block margins, so markdown lists
+   and paragraphs in an expanded banner would otherwise render flush. */
+.banner-expanded p,
+.banner-expanded ul,
+.banner-expanded ol {
+    margin: 0 0 0.5em;
+}
+
+.banner-expanded ul,
+.banner-expanded ol {
+    padding-left: 1.5em;
+}
+
+.banner-expanded ul {
+    list-style: disc;
+}
+
+.banner-expanded ol {
+    list-style: decimal;
+}
+
 /* OS message banner dismiss (×): inline, grouped with the headline/caret
    (not floated into the empty right side). Scoped so it only affects the
    OS promo banner, which is the only banner carrying these classes. */
@@ -1070,6 +1489,72 @@ span.endpoint_product {
     outline: none;
 }
 
+/* GitHub star prompt: small card pinned to the bottom-right corner */
+.github-star-prompt {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 1050;
+    width: 360px;
+    max-width: calc(100vw - 32px);
+    padding: 16px 20px;
+    background: #fff;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+.github-star-prompt-title {
+    margin: 0 24px 8px 0;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.github-star-prompt-title .fa-star {
+    color: #f5b301;
+}
+
+.github-star-prompt-body {
+    margin: 0 0 14px;
+    font-size: 13px;
+    opacity: 0.8;
+}
+
+.github-star-prompt-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.github-star-prompt-actions .github-star-prompt-star-form {
+    flex: 1;
+}
+
+.github-star-prompt-actions .github-star-prompt-star-form .btn {
+    width: 100%;
+}
+
+.github-star-prompt-close-form {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+}
+
+.github-star-prompt-close {
+    padding: 0 4px;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    cursor: pointer;
+    font-size: 20px;
+    line-height: 1;
+    opacity: 0.6;
+}
+
+.github-star-prompt-close:hover,
+.github-star-prompt-close:focus {
+    opacity: 1;
+}
+
 /* Removed: custom-search-form media queries — old topbar search sizing */
 
 /* Removed: Old sidebar/layout media queries for #page-wrapper, #footer-wrapper,
@@ -1093,9 +1578,9 @@ span.endpoint_product {
 #the-filters-paused,
 #the-filters-closed,
 [id^="the-filters"] {
-    background-color: #f8f9fb;
+    background-color: var(--color-surface-2, #fffaf4);
     padding: 1.25rem 1.25rem 0.5rem;
-    border-top: 2px solid var(--color-dd-primary-100, #C6DDF2);
+    border-top: 2px solid var(--color-dd-interactive-100, #d2e9ed);
 }
 
 /* Grid layout for filter fields */
@@ -1157,7 +1642,7 @@ span.endpoint_product {
 .filter-category-title {
     font-size: 0.6875rem;
     font-weight: 700;
-    color: var(--color-dd-primary-700, #204D87);
+    color: var(--color-dd-interactive-800, #004b5c);
     text-transform: uppercase;
     letter-spacing: 0.06em;
 }
@@ -1221,8 +1706,8 @@ span.endpoint_product {
 
 .dojo-filter-set .filter-form-control:focus,
 .dojo-filter-set .form-control:focus {
-    border-color: var(--color-dd-primary-300, #5094CC);
-    box-shadow: 0 0 0 3px rgba(23, 121, 197, 0.1);
+    border-color: var(--color-dd-interactive-700, #005f73);
+    box-shadow: 0 0 0 3px rgba(0, 95, 115, 0.1);
     outline: none;
 }
 
@@ -1242,6 +1727,8 @@ span.endpoint_product {
 .dojo-filter-set select[multiple],
 .dojo-filter-set select[multiple=multiple] {
     width: 100%;
+    /* override the fixed .form-control height, which would clip the list to a single option row */
+    height: auto;
     min-height: 2.125rem;
     max-height: 5rem;
     font-size: 0.8125rem;
@@ -1257,8 +1744,8 @@ span.endpoint_product {
 }
 
 .dojo-filter-set select[multiple] option:checked {
-    background-color: var(--color-dd-primary-50, #e8f3fb);
-    color: var(--color-dd-primary-700, #204D87);
+    background-color: var(--color-dd-interactive-50, #ecf6f8);
+    color: var(--color-dd-interactive-800, #004b5c);
 }
 
 /* Select2 in filters — match design system */
@@ -1287,17 +1774,17 @@ span.endpoint_product {
 }
 
 .dojo-filter-set .select2-container--default .select2-selection--multiple .select2-selection__choice {
-    background-color: var(--color-dd-primary-50, #e8f3fb);
-    border: 1px solid var(--color-dd-primary-200, #82B0D9);
+    background-color: var(--color-dd-interactive-50, #ecf6f8);
+    border: 1px solid var(--color-dd-interactive-200, #a7d4dc);
     border-radius: 0.25rem;
-    color: var(--color-dd-primary-700, #204D87);
+    color: var(--color-dd-interactive-800, #004b5c);
     font-size: 0.75rem;
     padding: 0.0625rem 0.375rem;
     margin: 0.125rem 0.25rem 0.125rem 0;
 }
 
 .dojo-filter-set .select2-container--default .select2-selection--multiple .select2-selection__choice__remove {
-    color: var(--color-dd-primary-500, #1779C5);
+    color: var(--color-dd-interactive-700, #005f73);
     margin-right: 0.25rem;
 }
 
@@ -1305,8 +1792,8 @@ span.endpoint_product {
 .dojo-filter-set .select2-container--default.select2-container--focus .select2-selection--multiple,
 .dojo-filter-set .select2-container--default.select2-container--open .select2-selection--single,
 .dojo-filter-set .select2-container--default.select2-container--open .select2-selection--multiple {
-    border-color: var(--color-dd-primary-300, #5094CC);
-    box-shadow: 0 0 0 3px rgba(23, 121, 197, 0.1);
+    border-color: var(--color-dd-interactive-700, #005f73);
+    box-shadow: 0 0 0 3px rgba(0, 95, 115, 0.1);
 }
 
 /* Filter help icons */
@@ -1342,7 +1829,56 @@ span.endpoint_product {
 }
 
 .panel-default {
-    border: 1px solid #dddedf;
+    border: 1px solid var(--color-border);
+}
+
+/* One gap between every card: stacked cards in a column, and cards in
+   consecutive rows, sit 1rem apart. */
+.panel,
+.card,
+.stat-card {
+    margin-bottom: 1rem;
+}
+
+/* Stat cards in a row fill their column, so a card whose label wraps
+   does not leave the others short with uneven space beneath them. */
+.row > [class*="col-"]:has(> .stat-card) {
+    display: flex;
+    flex-direction: column;
+}
+
+.row > [class*="col-"] > .stat-card {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.stat-card > .stat-card-link {
+    margin-top: auto;
+}
+
+/* The "Showing entries" / page size row around a list's table card:
+   centered on one line, with a gap before the card it introduces. */
+.clearfix:has(> .pagination) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.clearfix:has(> .pagination)::before,
+.clearfix:has(> .pagination)::after {
+    display: none;
+}
+
+.clearfix:has(> .pagination) {
+    margin-bottom: 0.75rem;
+}
+
+.clearfix > .pagination:not(nav .pagination) {
+    font-size: 0.875rem;
+    color: var(--color-text-muted);
 }
 
 .panel-heading h2,
@@ -1351,6 +1887,85 @@ span.endpoint_product {
 .panel-heading h5 {
 	margin-top: 0;
 	margin-bottom: 0;
+}
+
+/* Card heading icon: a fixed-width box one line tall, so the glyph sits
+   centered on the heading's text line and every heading's text starts at
+   the same offset. */
+.dd-card-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25em;
+    height: 1lh;
+    vertical-align: top;
+    margin-inline-end: 0.5rem;
+    /* Font Awesome pins line-height to 1; take the heading's instead, so
+       1lh is the heading's line box and the glyph centers on its text. */
+    line-height: inherit;
+    color: var(--color-text-muted);
+}
+
+/* In a flex title row the row's gap already separates icon and title. */
+.has-filters > .dd-card-icon {
+    margin-inline-end: 0;
+}
+
+/* One heading size for every card title, whatever level the template used. */
+.panel-heading :is(h1, h2, h3, h4, h5) {
+    font-size: 1.0625rem;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+/* A card header holding a title and a button row: center the title against
+   the buttons and push the buttons to the trailing edge. */
+.panel-heading > .clearfix {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.panel-heading > .clearfix::before,
+.panel-heading > .clearfix::after {
+    display: none;
+}
+
+.panel-heading > .clearfix > .pull-right {
+    margin-inline-start: auto;
+}
+
+/* Buttons grouped on the trailing side of a card header sit an even
+   0.5rem apart, instead of whatever whitespace the template left. */
+.panel-heading .pull-right {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* A header that is bare text (no heading element) reads as a card title too. */
+.panel-default > .panel-heading:not(:has(h1, h2, h3, h4, h5, h6, .row, form)) {
+    font-size: 1.0625rem;
+    font-weight: 700;
+}
+
+/* Big-number tiles (icon, count, link): keep the icon apart from the count. */
+.panel-heading > .row > [class*="col-"]:has(> .fa-2x) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.panel-heading > .row > [class*="col-"] > .fa-2x {
+    color: var(--color-text-muted);
+}
+
+/* A title that is not floated left fills the row, so its own trailing
+   controls can reach the edge. */
+.panel-heading > .clearfix > :is(h1, h2, h3, h4, h5):not(.pull-left) {
+    flex: 1 1 auto;
 }
 
 .panel-heading .btn {
@@ -1369,14 +1984,14 @@ span.endpoint_product {
 
 .panel-default > .panel-heading {
     color: var(--color-text);
-    font-size: 14px;
+    font-size: 0.875rem;
     background-color: var(--color-surface-2);
     border-color: var(--color-border);
 }
 
 .panel-default > .panel-heading a:not(.btn),
 .panel-default > .panel-heading small{
-	color: var(--color-dd-primary-500);
+	color: var(--color-dd-interactive-700);
 }
 
 .panel-default > .panel-heading a:not(.btn) {
@@ -1384,7 +1999,7 @@ span.endpoint_product {
 }
 
 .panel-default > .panel-heading a:not(.btn):hover{
-	color: var(--color-dd-primary-700);
+	color: var(--color-dd-interactive-800);
 	text-decoration: underline;
 }
 
@@ -1434,19 +2049,20 @@ span.endpoint_product {
 }
 
 .panel-footer small{
-	color: var(--color-dd-primary-500);
+	color: var(--color-dd-interactive-700);
 }
 
 /* dt-buttons / dt-search overrides removed — now in datatables-dd.css */
 
 table#product_types .btn-success{
-	background-color: var(--color-dd-primary-500);
-	border-color: var(--color-dd-primary-500);
+	background-color: var(--color-dd-primary-700);
+	border-color: var(--color-dd-primary-700);
+	color: var(--color-dd-on-primary);
 }
 
 table#product_types .btn-success:hover{
-	background-color: var(--color-dd-primary-700);
-	border-color: var(--color-dd-primary-700);
+	background-color: var(--color-dd-primary-800);
+	border-color: var(--color-dd-primary-800);
 }
 
 table#product_types .btn-warning{
@@ -1552,6 +2168,12 @@ a.template-popover:hover {
 
 .panel-available-widget {
     border-color: #ddd;
+}
+
+/* The Page Break widget's title is a block in the report; keep it on the
+   icon's line in the builder. */
+.panel-available-widget .panel-heading .report-page-break {
+    display: inline;
 }
 
 .panel-available-widget .panel-heading {
@@ -1707,7 +2329,7 @@ div.tags .label {
 }
 
 .tag-version {
-    background: var(--color-dd-primary-500);
+    background: var(--color-dd-interactive-700);
     border: 1px solid #fff;
 }
 
@@ -1741,6 +2363,27 @@ div.tags .label {
 .tag-label:active {
     color: white;
     text-decoration: none;
+}
+
+/* Item tags (findings, tests, engagements ...): grey outlined chips. */
+.tag-label.tag-color,
+.tag-label.tag-color:link,
+.tag-label.tag-color:visited {
+    display: inline-block;
+    background: transparent;
+    border: 1px solid var(--color-gray-300);
+    color: var(--color-text-muted);
+    font-weight: 500;
+    line-height: 1.4;
+    border-radius: 9999px;
+    padding: 0 0.5em;
+    margin: 0 0.125rem 0.125rem 0;
+}
+
+.tag-label.tag-color:hover,
+.tag-label.tag-color:focus {
+    border-color: var(--color-dd-interactive-700);
+    color: var(--color-dd-interactive-700);
 }
 
 .tag-label:visited {
@@ -1783,35 +2426,47 @@ mark{
     font-size: 90%;
 }
 
+/* Severity counter blocks: the tag tint and ink, with a bar in the base
+   severity color along the top. */
 .bg-vuln-critical {
-  background-color:#D43F3A
+  background-color: var(--color-severity-critical-bg);
+  color: var(--color-severity-critical-text);
+  border-top: 3px solid var(--color-severity-critical);
 }
 .bg-vuln-high {
-  background-color:#D57A1D
+  background-color: var(--color-severity-high-bg);
+  color: var(--color-severity-high-text);
+  border-top: 3px solid var(--color-severity-high);
 }
 .bg-vuln-medium {
-  background-color:#E4AB18
+  background-color: var(--color-severity-medium-bg);
+  color: var(--color-severity-medium-text);
+  border-top: 3px solid var(--color-severity-medium);
 }
 .bg-vuln-low {
-  background-color:#4CAE4C
+  background-color: var(--color-severity-low-bg);
+  color: var(--color-severity-low-text);
+  border-top: 3px solid var(--color-severity-low);
 }
 .bg-vuln-info {
-  background-color:#357ABD
+  background-color: var(--color-severity-info-bg);
+  color: var(--color-severity-info-text);
+  border-top: 3px solid var(--color-severity-info);
 }
 .bg-muted {
-  background-color:#777
+  background-color: #3d5155;
+  color: #fff8f0;
 }
 .vuln-count {
-  color:#fff;
   font-size:18px;
   font-weight: 700;
 }
 .vuln-count small,
 .vuln-count .small {
   /* Tailwind's base layer makes <small> use --color-text-muted (gray);
-     inside the severity counter boxes the label sits on a colored bg
-     and must stay white to match the count number above it. */
-  color: #fff;
+     inside the severity counter boxes the label takes the block's ink to
+     match the count number above it. */
+  color: inherit;
 }
 .metrics-severity-counts {
   table-layout: fixed;
@@ -1872,13 +2527,13 @@ small {
 }
 
 .select2-results__option--highlighted[aria-selected] {
-    background-color: var(--color-dd-primary-50, #e8f3fb) !important;
-    color: var(--color-dd-primary-700, #204D87) !important;
+    background-color: var(--color-dd-interactive-50, #ecf6f8) !important;
+    color: var(--color-dd-interactive-800, #004b5c) !important;
 }
 
 .select2-results__option[aria-selected="true"] {
-    background-color: var(--color-dd-primary-100, #C6DDF2);
-    color: var(--color-dd-primary-800, #0F3C6E);
+    background-color: var(--color-dd-interactive-100, #d2e9ed);
+    color: var(--color-dd-interactive-900, #003947);
 }
 
 .select2-search--dropdown .select2-search__field {
@@ -1890,8 +2545,8 @@ small {
 }
 
 .select2-search--dropdown .select2-search__field:focus {
-    border-color: var(--color-dd-primary-300, #5094CC);
-    box-shadow: 0 0 0 2px rgba(23, 121, 197, 0.1);
+    border-color: var(--color-dd-interactive-700, #005f73);
+    box-shadow: 0 0 0 2px rgba(0, 95, 115, 0.1);
 }
 
 /* Show Password toggle — inline, not absolutely positioned */
@@ -1901,11 +2556,11 @@ small {
     font-weight: 500 !important;
     padding: 0 !important;
     font-size: 0.8125rem;
-    color: var(--color-dd-primary-500, #1779C5);
+    color: var(--color-dd-interactive-700, #005f73);
     cursor: pointer;
 }
 #toggleBox:hover {
-    color: var(--color-dd-primary-700, #204D87);
+    color: var(--color-dd-interactive-800, #004b5c);
     text-decoration: underline;
 }
 

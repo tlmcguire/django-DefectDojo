@@ -15,7 +15,7 @@ The two pieces below are separate, and are controlled by different means.
 
 ### Asset Hierarchy
 
-**Asset Hierarchy** enables parent/child relationships between Assets. The hierarchy is viewed and managed from the **Product** tab in the navigation.
+**Asset Hierarchy** enables parent/child relationships between Assets. The hierarchy is viewed and managed from **Act > Explore > Assets > Hierarchy** in the sidebar.
 
 Asset Hierarchy is generally available and on for every instance, Cloud and On-Premise. There is nothing to enable, and it is no longer listed on the Feature Flags page.
 
@@ -26,9 +26,9 @@ Asset Hierarchy is generally available and on for every instance, Cloud and On-P
 Label changes are on by default as of 3.0. There are two controls, covering different parts of the application:
 
 * **Pro UI** (the default UI): a superuser toggles "Organization / Asset Relabeling" at **Settings > Feature Flags**, on both Cloud and On-Premise instances. The new labels appear on the next page load. See [Feature Flags](/admin/feature_flags/pro__feature_flags/).
-* **Classic UI pages and generated reports**: their labels and URLs come from the `DD_ENABLE_V3_ORGANIZATION_ASSET_RELABEL` deployment setting, which is read when DefectDojo starts. On-premise, set it and restart DefectDojo. On [DefectDojo Pro (Cloud)](/get_started/pro/cloud/), email [support@defectdojo.com](mailto:support@defectdojo.com) with your instance URL.
+* **Classic UI pages and generated reports**: their labels and URLs are decided when DefectDojo starts, so they follow the same toggle after the next restart. On-premise, restart DefectDojo after changing the toggle. On [DefectDojo Pro (Cloud)](/get_started/pro/cloud/), email [support@defectdojo.com](mailto:support@defectdojo.com) with your instance URL if you need a restart scheduled.
 
-Both default to on, and the Feature Flags value was seeded from the deployment setting, so the two agree unless you change one of them. Keep them in sync if you use the Classic UI as well as the Pro UI.
+The toggle is on by default. Its stored value was seeded from the `DD_ENABLE_V3_ORGANIZATION_ASSET_RELABEL` deployment setting on upgrade; from then on the database owns it, and the setting is only a fallback for when the database cannot be reached at start-up.
 
 Note that label changes are cosmetic only: API endpoints and field names remain unchanged, so existing automation will continue to work.
 
@@ -106,7 +106,7 @@ The Parent Asset could contain Engagements representing CI/CD results, internal 
 
 ## Visualizing Assets - Hierarchy
 
-You can visualize the structure of Assets in DefectDojo, and change relationships using the Asset Hierarchy option in the menu.
+You can visualize the structure of Assets in DefectDojo, and change relationships using **Act > Explore > Assets > Hierarchy** in the sidebar.
 
 ![image](images/asset_hierarchy.png)
 
@@ -118,11 +118,51 @@ The page has three parts: a list of your Assets across the top, the diagram belo
 
 The buttons at the bottom left of the diagram zoom in and out, and fit the whole diagram in view. Clicking and dragging the background moves the diagram, and each Asset can be dragged for display purposes.
 
-Assets are connected by labelled arrows running from parent to child, which represent the kind of relationship each node has to the other. Currently, `parent` is the only label supported.
+Assets are connected by labelled arrows, which represent the kind of relationship each node has to the other.
+
+Four relationship types ship by default:
+
+| Label | Meaning | Rolls up? |
+| --- | --- | --- |
+| `parent` | The tree relationship you build from the Asset Hierarchy screen. An Asset has at most one parent. | Yes |
+| `contains` | Composition — the source Asset is made up of the target. Unlike `parent`, the same Asset can be contained by several others. | Yes |
+| `derived_from` | Lineage — the source Asset was built from the target, as a container image is built from a base image. | **No** |
+| `deploys_to` | Deployment: the source Asset runs on the target, as a service runs on a cluster. The diagram labels the edge "deploys to" one way and "hosts" the other. | **No** |
+
+"Rolls up" is what decides whether a relationship aggregates upward: it controls both the
+indirect counts described below and the **Include child assets** option on metrics. `derived_from`
+deliberately does not roll up. A base image's Findings are not the derived Asset's own exposure,
+and attributing them to every Asset built from it multiplies the same Finding across your whole
+estate. `deploys_to` does not roll up for the same reason: a cluster's Findings are not the
+Findings of every service deployed on it.
+
+`deploys_to` is the one relationship that carries [Asset Exposure](/triage_findings/finding_scoring/asset_exposure/#exposure-inherited-from-where-an-asset-runs):
+a service deployed onto an internet-facing cluster shows the cluster's exposure as its effective
+exposure. No other relationship carries exposure, so an Asset that `contains` an exposed Asset
+is not itself treated as reachable.
 
 Each node is coloured by where it came from: one colour for the Assets you selected in the list, another for Assets the diagram loaded because they are related to your selection. The **Legend** in the left panel names both.
 
-The left panel also chooses what the nodes display. **Asset ID**, **Organization ID**, **Organization Name** and **Child Count** can each be turned on or off.
+The left panel also chooses what the nodes display. **Asset ID**, **Organization ID**, **Organization Name**, **Child Count** and **Vulnerabilities** can each be turned on or off.
+
+### Direct and indirect vulnerabilities
+
+Each node shows two counts:
+
+* **direct** — Findings on that Asset itself.
+* **indirect** — Findings on the Assets below it, reached over relationships that roll up.
+
+So an Asset that contains a library shows the library's Findings as indirect, while an Asset
+built from a base image does **not** show the base image's Findings at all.
+
+A Finding reachable by more than one path is counted once. The counts are always calculated from
+the graph as it currently stands — nothing is stored, so re-parenting an Asset changes them
+immediately, and no Finding is ever copied onto another Asset. Assets you do not have permission
+to view contribute nothing, and show no counts at all rather than a zero.
+
+The same split appears in the footer of the Findings count card on the Asset page. There, **direct** matches the
+total in that page's Open Finding Severity breakdown: both exclude duplicates, false positives
+and out-of-scope Findings.
 
 ### Acting on an Asset
 
@@ -148,6 +188,100 @@ Where an Asset's parent has not been loaded, a **Load Parents** button appears a
 
 Where an Asset has more children than the diagram is currently showing, a **Load** button appears below it, together with a choice of how many to add at a time.
 
+## Moving Assets between Organizations
+
+You can reorganize at any time: an Asset can move to another Organization from the Edit Asset form, the bulk menu on the Assets list, the API, or a Rules Engine action, and the hierarchy stays consistent whichever you use.
+
+### The subtree moves along
+
+When an Asset moves to another Organization, every Asset below it (its children, their children, and so on) moves to the same Organization, and the parent/child links inside that subtree are kept. Moving `webapp-backend` from the earlier example to another Organization takes `database` and `api` with it.
+
+To move an Asset on its own, uncheck **Move Children Along** in the bulk menu, or send `"move_children": false` to the [bulk update API](#bulk-updates-through-the-api). The children then stay in the original Organization: their link to the moved Asset is removed and each one becomes a top-level Asset there.
+
+Moving a child is an edit of that child, so taking a subtree along needs edit permission on every Asset in it. If you cannot edit one of them, the move is refused and nothing changes; move the Asset without its children instead, or ask someone who can edit the whole subtree.
+
+### A parent stays in its own Organization
+
+A `parent` link never connects Assets in two different Organizations. When an Asset moves away from its parent, the link to that parent is removed and the Asset becomes a top-level Asset in its new Organization.
+
+Each removed link is kept in the audit log, and the owners and contacts of the Asset that lost its parent (its Technical Contact, Team Manager and Asset Manager, and members with the Owner role, as long as they can still see the Asset) receive one notification listing the affected Assets.
+
+The same rule applies everywhere a parent is set:
+
+* Choosing a parent in another Organization (on the Edit Asset form, in the hierarchy, or with `"parent"` on the API) is refused with an error.
+* Parent links that a connector declares (for example, artifacts under their repository) are only created when both Assets are in the same Organization. A declared parent in another Organization is skipped.
+* The Rules Engine **Set Parent** action counts a parent in another Organization as a failed item, and **Set Organization** moves subtrees along exactly as described above.
+
+The other default relationship types, `contains` and `derived_from`, also refuse a new link between two Organizations, but a move leaves their existing links in place.
+
+### Priority is recalculated
+
+A Finding's priority weighs its Asset's revenue and user records as a share of its Organization's totals, so a move changes the share of every Asset in both Organizations. After a move, Finding priority is recalculated in the background for the Organization the Assets left and the one they joined, once per Organization however many Assets moved.
+
+Dedupe pools that were created from a parent Asset's subtree are not updated when Assets move or are re-parented. To bring such a pool up to date, turn the subtree option off and on again on the parent Asset.
+
+## Bulk updates through the API
+
+`POST /api/v2/assets/bulk_update/` applies the same change to many Assets in one request. It is what the bulk menu on the Assets list uses, and it accepts an API token like every other `/api/v2/` endpoint.
+
+| Field | Effect |
+| --- | --- |
+| `products` | Required. The IDs of the Assets to change, at most 500 per request. |
+| `prod_type` | Move the Assets to this Organization. |
+| `move_children` | `true` (default) moves each Asset's subtree along; `false` leaves the children behind as top-level Assets. |
+| `parent` | Place the Assets under this parent. `null` removes their parent. |
+| `asset_type` | Set the Asset type (for example `repository` or `service`). `null` clears it. |
+| `business_criticality` | `very high`, `high`, `medium`, `low`, `very low` or `none`. `null` clears it. |
+| `technical_contact`, `team_manager`, `product_manager` | Set the contact to this user ID (an active user). `null` clears it. |
+| `sla_configuration`, `prioritization_engine` | Apply this SLA configuration or Prioritization Engine. |
+| `tags` | Add these tags. Existing tags are kept. |
+
+Leave out any field you do not want to change. Moving and setting a parent can be combined: the move happens first, so the new parent only has to be in the new Organization.
+
+```bash
+curl -X POST "https://defectdojo.example.com/api/v2/assets/bulk_update/" \
+  -H "Authorization: Token <your API token>" \
+  -H "Content-Type: application/json" \
+  -d '{"products": [12, 13, 14], "prod_type": 4, "parent": 9, "business_criticality": "high"}'
+```
+
+A successful request returns how many of the named Assets changed, how many descendants moved along, and how many parent links were removed:
+
+```json
+{"updated": 3, "unchanged": 0, "descendants_moved": 5, "parent_links_removed": 1}
+```
+
+**A bulk update is all or nothing.** If any Asset in the request cannot be changed, nothing is written and the response is a `400` listing every Asset that was refused and why, so you can fix them and send the whole request again:
+
+```json
+{
+  "detail": "Nothing was changed. Fix the listed problems and send the whole batch again.",
+  "errors": [
+    {"product": 13, "name": "payments-api", "field": "parent", "message": "Relationship 'parent' cannot cross organizations: both assets must belong to the same organization"},
+    {"product": 99, "field": "products", "message": "Not found, or you are not allowed to edit it."}
+  ]
+}
+```
+
+An Asset is refused when you cannot edit it (or it does not exist), when the new parent would create a cycle or sit in another Organization, when its subtree contains an Asset you cannot edit, or, for SLA and Prioritization Engine changes, while a previous recalculation for that Asset is still running.
+
+Permissions are the same as editing each Asset on its own: you need edit permission on every Asset in the request and on the new parent, and permission to add Assets to the destination Organization. Setting `parent` requires the Asset Hierarchy to be enabled.
+
+To reorganize more than 500 Assets, send several requests. Each one is applied as a single change, so a failed request never leaves a reorganization half done.
+
+**To see what a bulk update will change before it writes anything**, add `"dry_run": true` to the request: nothing is written, and the response lists every field change, every descendant that would move along, every parent link that would be removed and every refused Asset. For reorganizations larger than 500 Assets, or ones you want reviewed, applied and possibly undone as one change, use a [change plan](../change_plans/).
+
+## Suggested edges from container evidence
+
+When [Container Image Locations](/asset_modelling/locations/pro__container_image_locations/) are enabled, DefectDojo can notice a deployment relationship nobody has drawn: an image whose repository belongs to one asset is seen running in another, and no **deploys to** edge joins the two. Each such pair appears as a **suggested edge** on the hierarchy page, with the images as evidence.
+
+- A banner at the top of the page counts the open suggestions. **Review** opens the list.
+- **Accept** draws the deploys-to edge from the asset that built the image to the asset that runs it. Because deploys-to propagates exposure, the deployed asset then inherits its host's exposure when you read it; finding priority is unaffected, since it runs on the asset's own exposure.
+- **Dismiss** suppresses the pair. Further images for the same pair are counted but do not reopen it. A dismissed suggestion can be reopened from the same dialog.
+- Accepted edges carry their own origin (container evidence), so they can be told apart from edges people drew and from connector-declared ones.
+
+Suggestions are never accepted automatically, and they are only offered within one organization while deploys-to stays a same-organization relationship. Reviewing requires the Asset Hierarchy view permission; deciding requires the edit permission plus edit access to both assets.
+
 ## Notes
 
 * Note that deduplication scopes have not changed; Assets only deduplicate Findings within themselves, and do not consider Findings in other Assets, regardless of Parent/Child relationships.
@@ -155,4 +289,5 @@ Where an Asset has more children than the diagram is currently showing, a **Load
   * Giving a user access to an entire Organization will still give that user access to all Assets contained within that Organization (as with Product Types).
   * Giving a user access to a single Asset does not give that user access to any related Parent or Child Assets, nor access to the Organization.
 * There is no limit to the number of Parent/Child relationships that can be created. Theoretically, you could represent a repository's entire directory structure with separate Assets if you wished.
-* Cyclical relationships are not allowed: Parent Assets cannot be Children of their Child Assets.
+* Cyclical relationships are not allowed: Parent Assets cannot be Children of their Child Assets. This is enforced per relationship type and in the database itself, so it holds no matter how the edge was created.
+* Indirect counts are calculated on read and never stored. Attributing a Finding to an Asset that did not report it would multiply that Finding across every Asset below it, so DefectDojo shows the number and leaves the Finding where it was found.

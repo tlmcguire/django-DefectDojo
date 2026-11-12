@@ -2,6 +2,7 @@ import logging
 
 from django.db import transaction
 from django.db.models import (
+    BooleanField,
     Case,
     CharField,
     Count,
@@ -24,12 +25,36 @@ except ImportError:
 
 from dojo.authorization.roles_permissions import Permissions
 from dojo.finding.queries import get_authorized_findings
+from dojo.location.feature import locations_enabled
 from dojo.location.models import Location, LocationFindingReference, LocationProductReference
 from dojo.location.status import FindingLocationStatus, ProductLocationStatus
+from dojo.models import Product
 from dojo.product.queries import get_authorized_products
 from dojo.query_utils import build_count_subquery
 
 logger = logging.getLogger(__name__)
+
+
+def location_prefetch_lookups(prefix: str = "") -> list[str]:
+    """
+    Prefetch lookups for the location relation that the hash and deduplication paths read
+    through ``Finding.get_locations()``, for the location model actually in use.
+
+    Endpoint rows are not deleted by the move to Locations, and ``Endpoint.__init__`` raises
+    ``NotImplementedError`` once ``V3_FEATURE_LOCATIONS`` is on (see
+    ``Endpoint.allow_endpoint_init``). So prefetching the endpoint relation under V3 hydrates
+    the deprecated model for every surviving row and kills the caller -- on a migrated
+    instance, not on a fresh one, which is why it is easy to miss. Under V3 ``get_locations()``
+    reads URL locations and never touches endpoints, so the endpoint prefetch is dead weight
+    there in any case.
+
+    :param prefix: relation path to the Finding, e.g. ``"finding__"`` when paging a model that
+        reaches the finding through a relation.
+    """
+    if locations_enabled():
+        return [f"{prefix}locations__location__url"]
+    # TODO: Delete this after the move to Locations
+    return [f"{prefix}endpoints"]
 
 
 def get_authorized_locations(permission, queryset=None, user=None):
@@ -37,6 +62,17 @@ def get_authorized_locations(permission, queryset=None, user=None):
     if impl:
         return impl(permission, queryset=queryset, user=user)
     return Location.objects.all().order_by("id") if queryset is None else queryset
+
+
+def get_import_form_locations(product, user):
+    """
+    Locations offered on the import and re-import forms: the product's own, or, when the product
+    has none, the ones the user can view (the same set the import API accepts).
+    """
+    locations = Location.objects.filter(products__product=product)
+    if locations.exists():
+        return locations
+    return get_authorized_locations("view", user=user)
 
 
 def get_authorized_location_finding_reference(permission, queryset=None, user=None):
@@ -110,6 +146,98 @@ def locations_shared_outside(locations, products):
         location=OuterRef("pk"),
     ).exclude(finding__test__engagement__product__in=products)
     return locations.filter(Exists(foreign_products) | Exists(foreign_findings))
+
+
+def fully_authorized_locations(user=None):
+    """
+    Locations every one of whose references the caller is authorized for.
+
+    A Location row is deduplicated globally, so the fields and audit events hanging off it
+    are shared by every product referencing it, with no record of which product contributed
+    which. They are only the caller's to read when they are authorized for the whole row.
+    """
+    products = get_authorized_products(Permissions.Product_View, user=user)
+    return Location.objects.exclude(
+        Exists(
+            LocationProductReference.objects.filter(
+                location=OuterRef("pk"),
+            ).exclude(product__in=products),
+        )
+        | Exists(
+            LocationFindingReference.objects.filter(
+                location=OuterRef("pk"),
+            ).exclude(finding__test__engagement__product__in=products),
+        ),
+    )
+
+
+def reads_every_product(user=None):
+    """
+    Whether the caller is authorized for every product, so every Location row is fully theirs.
+
+    One cheap query over products. It spares the per-location walk in
+    :func:`fully_authorized_locations`, which for such a caller can never stop early: it has to
+    visit every finding reference of the row (through finding, test and engagement) to prove none
+    is foreign, and a heavily shared location has thousands.
+    """
+    products = get_authorized_products(Permissions.Product_View, user=user)
+    return not Product.objects.exclude(pk__in=products.values("pk")).exists()
+
+
+def location_tags_readable(location, user=None):
+    """Whether the caller may read the shared tag set on ``location``."""
+    if reads_every_product(user):
+        return True
+    return fully_authorized_locations(user).filter(pk=location.pk).exists()
+
+
+def readable_tag_match(location_field, user=None, **lookups):
+    """
+    ``Exists`` over readable tag sets, for filtering without joining the tag relation.
+
+    Use this rather than a joined ``filter()``: the host view runs ``distinct("url__host")``,
+    which a bare ``.distinct()`` added to deduplicate a join would clear.
+    """
+    return Exists(
+        fully_authorized_locations(user).filter(pk=OuterRef(location_field), **lookups),
+    )
+
+
+# Read by Location.readable_tags. Its own name, so it never collides with an annotation a caller
+# (Pro's v3 router, for one) already puts on the same queryset.
+TAGS_READABLE_ANNOTATION = "caller_may_read_tags"
+
+
+def annotate_tags_readable(locations, user=None):
+    """Annotate :data:`TAGS_READABLE_ANNOTATION` (see :func:`location_tags_readable`) once per page instead of per row."""
+    if reads_every_product(user):
+        return locations.annotate(**{TAGS_READABLE_ANNOTATION: Value(value=True, output_field=BooleanField())})
+    return locations.annotate(**{TAGS_READABLE_ANNOTATION: readable_tag_match("pk", user=user)})
+
+
+def mark_tags_readable(locations, user=None):
+    """
+    Set :data:`TAGS_READABLE_ANNOTATION` on already-fetched ``locations`` (a page) in one query.
+
+    Prefer this to :func:`annotate_tags_readable` on a paginated list: an annotation is part of
+    the page query (evaluated for every row walked past on the way to OFFSET) and, behind a
+    DISTINCT, of the pagination COUNT (evaluated for every matching row), and the readability
+    check is the expensive part of both.
+    """
+    locations = list(locations)
+    if not locations:
+        return locations
+    if reads_every_product(user):
+        readable = {location.pk for location in locations}
+    else:
+        readable = set(
+            fully_authorized_locations(user)
+            .filter(pk__in=[location.pk for location in locations])
+            .values_list("pk", flat=True),
+        )
+    for location in locations:
+        setattr(location, TAGS_READABLE_ANNOTATION, location.pk in readable)
+    return locations
 
 
 def annotate_location_counts_and_status(locations, user=None):

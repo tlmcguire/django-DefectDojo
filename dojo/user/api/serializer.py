@@ -8,6 +8,7 @@ from rest_framework import serializers
 from rest_framework.authtoken.serializers import AuthTokenSerializer
 
 from dojo.models import Dojo_User, UserContactInfo
+from dojo.user.authentication import token_expires_at
 from dojo.user.utils import get_configuration_permissions_codenames
 
 User = get_user_model()
@@ -18,6 +19,7 @@ class UserSerializer(serializers.ModelSerializer):
     last_login = serializers.DateTimeField(read_only=True, allow_null=True)
     email = serializers.EmailField(required=True)
     token_last_reset = serializers.SerializerMethodField()
+    token_expiry = serializers.SerializerMethodField()
     password_last_reset = serializers.SerializerMethodField()
     password = serializers.CharField(
         write_only=True,
@@ -49,6 +51,7 @@ class UserSerializer(serializers.ModelSerializer):
             "is_staff",
             "is_superuser",
             "token_last_reset",
+            "token_expiry",
             "password_last_reset",
             "password",
             "configuration_permissions",
@@ -60,9 +63,35 @@ class UserSerializer(serializers.ModelSerializer):
         return getattr(uci, "token_last_reset", None)
 
     @extend_schema_field(serializers.DateTimeField(allow_null=True))
+    def get_token_expiry(self, instance):
+        """Effective expiry, including the instance-wide default, not just an explicit override."""
+        # Read the token through the reverse one-to-one so a select_related on the
+        # viewset queryset serves it without a per-row query. Point the token back
+        # at the already-loaded instance so token_expires_at() reuses the
+        # select_related usercontactinfo instead of re-fetching user + contact info.
+        token = getattr(instance, "auth_token", None)
+        if token is None:
+            return None
+        token.user = instance
+        return token_expires_at(token)
+
+    @extend_schema_field(serializers.DateTimeField(allow_null=True))
     def get_password_last_reset(self, instance):
         uci = getattr(instance, "usercontactinfo", None)
         return getattr(uci, "password_last_reset", None)
+
+    @property
+    def _allowed_configuration_permission_ids(self):
+        # The set of allowed configuration-permission ids is the same for every
+        # row, so resolve it once per serializer instead of running the same
+        # values_list query for each user in a list response.
+        if not hasattr(self, "_allowed_configuration_permission_ids_cache"):
+            self._allowed_configuration_permission_ids_cache = set(
+                self.fields[
+                    "configuration_permissions"
+                ].child_relation.queryset.values_list("id", flat=True),
+            )
+        return self._allowed_configuration_permission_ids_cache
 
     def to_representation(self, instance):
         ret = super().to_representation(instance)
@@ -70,13 +99,8 @@ class UserSerializer(serializers.ModelSerializer):
         # This will show only "configuration_permissions" even if user has also
         # other permissions
         all_permissions = set(ret["configuration_permissions"])
-        allowed_configuration_permissions = set(
-            self.fields[
-                "configuration_permissions"
-            ].child_relation.queryset.values_list("id", flat=True),
-        )
         ret["configuration_permissions"] = list(
-            all_permissions.intersection(allowed_configuration_permissions),
+            all_permissions.intersection(self._allowed_configuration_permission_ids),
         )
 
         return ret
@@ -239,15 +263,27 @@ class UserProfileSerializer(serializers.Serializer):
     user_contact_info = UserContactInfoSerializer(many=False, required=False)
 
 
-class ResetAwareAuthTokenSerializer(AuthTokenSerializer):
+class RevokeApiTokenSerializer(serializers.Serializer):
 
-    """Refuse to hand out an API token while the account has a forced password reset pending."""
+    """Input for revoking a single API token by its key value."""
+
+    key = serializers.CharField(write_only=True, trim_whitespace=True, max_length=256)
+
+    def validate_key(self, value):
+        value = value.strip()
+        if not value:
+            msg = "key may not be blank."
+            raise serializers.ValidationError(msg)
+        return value
+
+
+class ForcedResetAuthTokenSerializer(AuthTokenSerializer):
+
+    """Credential check that also refuses an account still owing a forced password reset."""
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        # Runs only after the credentials checked out, so it reveals nothing to a caller
-        # without the password. A pending reset means that password may be compromised.
         if Dojo_User.force_password_reset(attrs["user"]):
-            msg = "A password reset is required before an API token can be issued."
+            msg = "A password reset is required before this account can obtain an API token."
             raise serializers.ValidationError(msg, code="authorization")
         return attrs

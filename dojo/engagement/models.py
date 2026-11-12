@@ -8,9 +8,10 @@ from django.db import models
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.translation import gettext as _
-from tagulous.models import TagField
+from django_tagulous.models import TagField
 
-from dojo.base_models.base import BaseModel
+from dojo.base_models.base import BaseManager, BaseModel
+from dojo.query_hooks import HookedBaseManager, HookedManager, UnfilteredManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,14 @@ class Engagement_Presets(models.Model):
     scope = models.CharField(max_length=800, help_text=_("Scope of Engagement testing, IP's/Resources/URL's)"), default=None, blank=True)
     product = models.ForeignKey("dojo.Product", on_delete=models.CASCADE)
     created = models.DateTimeField(auto_now_add=True, null=False)
+
+    # Read and written only by plugins; open source never sets them.
+    archived_at = models.DateTimeField(null=True, blank=True, editable=False)
+    archive_batch = models.UUIDField(null=True, blank=True, editable=False)
+
+    # objects is declared first, so it is the default manager; see dojo.query_hooks.
+    objects = HookedManager()
+    unfiltered = UnfilteredManager()
 
     class Meta:
         ordering = ["title"]
@@ -94,9 +103,18 @@ class Engagement(BaseModel):
     tags = TagField(blank=True, force_lowercase=True, help_text=_("Add tags that help describe this engagement. Choose from the list or add new tags. Press Enter key to add."))
     inherited_tags = TagField(blank=True, force_lowercase=True, help_text=_("Internal use tags sepcifically for maintaining parity with product. This field will be present as a subset in the tags field"))
 
+    # Read and written only by plugins; open source never sets them.
+    archived_at = models.DateTimeField(null=True, blank=True, editable=False)
+    archive_batch = models.UUIDField(null=True, blank=True, editable=False)
+
+    # objects is declared first, so it is the default manager; see dojo.query_hooks.
+    objects = HookedBaseManager()
+    unfiltered = BaseManager()
+
     class Meta:
         ordering = ["-target_start"]
         indexes = [
+            models.Index(fields=["archive_batch"], condition=models.Q(archive_batch__isnull=False), name="dojo_engagement_archive_batch"),
             models.Index(fields=["product", "active"]),
             # Global search (pro/search/): weighted tsvector FTS + trigram fuzzy match.
             GinIndex(
@@ -107,29 +125,6 @@ class Engagement(BaseModel):
             GinIndex(fields=["name"], opclasses=["gin_trgm_ops"], name="dojo_engagement_name_trgm"),
         ]
 
-    def pre_save_logic(self):
-        """
-        Fall back to the declared default when the status is empty.
-
-        `status` is nullable and carries a default, but it is not `blank=True`, so the
-        `full_clean()` the base model runs on every save rejects both `None` and `""` with
-        "This field cannot be blank." Rows with an empty status exist all the same -- writes
-        made before the base model validated, and DefectDojo's own sample data -- and could
-        then never be saved again.
-
-        That took down imports: the importer's closing write-back saves the test's engagement
-        on every run, and the only engagement field an import ever sets is `target_end` (CI/CD
-        engagements). A scan therefore failed, and imported nothing, over a field it had not
-        touched.
-
-        An empty value is not one of ENGAGEMENT_STATUS_CHOICES, so there is nothing to
-        preserve. Applying the default here -- before the validation step, and regardless of
-        whether validation is enabled -- lets the save proceed and heals the row on its next
-        write, instead of leaving a row that no code path can save.
-        """
-        if not self.status:
-            self.status = self._meta.get_field("status").default
-
     def __str__(self):
         return "Engagement {}: {} ({})".format(self.id if id else 0, self.name or "",
                                         self.target_start.strftime(
@@ -137,6 +132,27 @@ class Engagement(BaseModel):
 
     def get_absolute_url(self):
         return reverse("view_engagement", args=[str(self.id)])
+
+    def pre_save_logic(self) -> None:
+        """
+        Fill in an empty `status` / `engagement_type` from the field's own default.
+
+        Both columns are nullable, but neither offers an empty choice and both declare a
+        default, so an empty value carries no meaning the rest of the codebase can read --
+        filters, reports and the UI all assume one of the listed choices. Django counts
+        None among a field's empty values, so a row storing NULL in either column failed
+        its own validation ("This field cannot be blank.") on every save, which made rows
+        written before these defaults existed permanently unsavable: every (re)import
+        writes its engagement back at the end of a run, so one such row turned every scan
+        ingest into that engagement into a hard failure.
+
+        Normalizing here rather than widening the fields to `blank=True` keeps a value
+        outside the choice list from becoming valid, and lets each affected row heal the
+        next time anything saves it.
+        """
+        for field_name in ("status", "engagement_type"):
+            if not getattr(self, field_name):
+                setattr(self, field_name, self._meta.get_field(field_name).get_default())
 
     def copy(self):
         from dojo.models import Test, copy_model_util  # noqa: PLC0415 -- lazy import, avoids circular dependency

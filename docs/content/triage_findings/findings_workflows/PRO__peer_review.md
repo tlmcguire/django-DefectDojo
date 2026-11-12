@@ -13,19 +13,19 @@ Open a Finding and choose **Request Review** from the Finding menu, or select se
 
 You can request a review from named users and groups, or tick **Allow Eligible Reviewers** to ask everyone who is eligible on that asset.
 
-Requesting a review sets the Finding to **Under Review** and notifies the reviewers.
+Requesting a review sets the Finding to **Under Review** and notifies the reviewers. The message you enter is added to the Finding as a regular note, so the reviewers can read what they are being asked to check. Like any other note, it can [@mention](../intro_to_findings/#notes-and-mentions) users: each mentioned user gets a user-mentioned notification, whether or not they are one of the reviewers. The same applies to the message entered when a review is cleared.
 
 ## Claiming a review
 
 When a review has been requested from several people, any one of them can take it:
 
-* On the Finding, use **Claim Review** in the Finding menu, or the button in the review banner.
+* On the Finding, use **Claim Review** in the Finding menu, or the button in the review banner, then submit the **Claim Review** form. From [My Work](/metrics_reports/dashboards/pro__my_work/), the **Claim Review** next step opens the same form.
 * The Finding then shows who holds the review, on the Finding itself, as a **Claimed By** column in Finding lists, and in that person's [My Work](/metrics_reports/dashboards/pro__my_work/) queue.
 
 Once a review is claimed:
 
 * Only the person holding it, the person who requested it, or a superuser can **Clear Review**. Other eligible reviewers are told who holds it instead.
-* The holder can hand it back with **Release Review**, which returns it to the pool without ending the review.
+* The holder can hand it back with **Release Review** and its form, which returns it to the pool without ending the review.
 
 If two people claim at the same moment, one succeeds and the other is told who won — the review can only ever be held by one person.
 
@@ -60,12 +60,20 @@ Review asks someone to *look*. Assignment makes someone *responsible*, and it do
 **Assignees** sits beside **Owners** on the Finding edit form. Owners is a group — the team whose queue this belongs in — while Assignees are individual people.
 
 * Assign from the Finding edit form, or to many Findings at once from the bulk editor.
-* In the bulk editor, assignees are **added** to whoever is already assigned. Tick **Replace existing assignees** to make your selection the complete list — which removes anyone not selected, including everyone if you select nobody.
+* In the bulk editor, assignees are **added** to whoever is already assigned. Tick **Replace Existing Assignees** to make your selection the complete list — which removes anyone not selected, including everyone if you select nobody.
 * Findings lists carry an **Assignees** column and an assignee filter, and reports can include an **Assignees** column.
 * Each person's assignments appear in their [My Work](/metrics_reports/dashboards/pro__my_work/) queue.
 
 You can only assign a Finding to somebody who can already see it. Assignment does not grant access.
 
-The [Rules Engine](/automation/rules_engine/) can set assignees automatically: choose **Set Users** and the **assignees** field.
+### When a Finding closes
+
+An assignment is finished once its Finding closes: the Finding is mitigated, risk accepted, or marked False Positive, Out of Scope or Duplicate, or it is otherwise made inactive.
+
+* The Finding's assignees are cleared. They leave the **Assignees** column, the assignee filter, the Finding page and the reports' **Assignees** column, and the Finding leaves their My Work queue.
+* Reopening the Finding does not bring them back. Assign someone again if the reopened Finding needs an owner.
+* A closed Finding cannot be assigned. Saving new assignees on one is refused with a message saying so, the bulk editor skips the closed Findings in a selection and names them, and a Triage Engine rule that sets assignees leaves closed Findings alone.
+
+The [Triage Engine](/automation/rules_engine/) can set assignees automatically: choose **Set Users** and the **assignees** field.
 
 Assignment is controlled by the **Work Assignment** [feature flag](/admin/feature_flags/pro__feature_flags/).

@@ -23,10 +23,26 @@ Level 2 self-assessments, and shows which NIST 800-53 controls your scanners act
 
 Everything described in this section lives on the **Compliance** tab of an Asset.
 
+The tab leads with **Needs Attention**: POA&M items past their scheduled completion date, last
+month's ConMon snapshot when it has not been generated, and CMMC requirements that are not met.
+Each item links to the page that resolves it, and **All caught up** shows when nothing is
+outstanding. **All Pages** lists the Compliance Profile, POA&M Items, POA&M Snapshots, CMMC
+Assessment and Control Coverage pages, each with its count: open POA&M items, the latest
+snapshot month, the SPRS score and the controls with open findings. A tag beside the heading
+shows the FedRAMP impact level from the Compliance Profile, or **Tracking Off** when the
+profile is disabled. On an Asset with no profile yet, the tab offers **Set Up Compliance
+Profile** to users who can edit the Asset.
+
+![The Compliance tab on an Asset](images/25-asset-compliance-tab.png)
+
+The Compliance tab is also a widget: in an Asset page layout it can sit in its own tile, where
+it arranges itself to the tile's size and folds the page list into a **Compliance Pages** menu
+when the tile is small.
+
 ## Enabling the feature
 
 Federal Compliance ships behind the **Compliance** feature flag, which is in beta and off by
-default. An administrator turns it on from the feature flags menu — see
+default. An administrator turns it on from **Settings > Feature Flags** — see
 [Feature Flags](/admin/feature_flags/pro__feature_flags/). Once enabled, a Compliance tab
 appears on each Asset.
 
@@ -49,5 +65,11 @@ purpose.
 | [The POA&M Ledger](poam_ledger) | How POA&M items are created from findings, and the conventions the ledger follows |
 | [ConMon Snapshots](conmon_snapshots) | Monthly deliverables in FedRAMP Excel and OSCAL, and the optional OSCAL validation service |
 | [Remediation Deadlines](remediation_slas) | The FedRAMP Rev 5 and FedRAMP VDR SLA presets |
+| [Potential Agency Impact (PAIN) Ratings](pain_ratings) | Rating findings on FedRAMP's N-scale, and the Class C deadline matrix |
+| [Setting Up PAIN Ratings](pain_ratings_setup) | A step-by-step walkthrough: turn tiering on, assign a rating, and check the deadlines against the matrix |
 | [CMMC Level 2 Assessments](cmmc_assessments) | Scoring a self-assessment against NIST 800-171 Rev 2 |
+| [CRA and DORA Evidence Packs](eu_evidence_packs) | Assessing an Asset against authored EU regulatory catalogs and exporting its evidence |
+| [Setting Up EU CRA](eu_cra_setup) | A step-by-step walkthrough: turn the features on, record each product's CRA facts, load releases, handle an Article 14 report, and produce evidence |
+| [Regulatory Profile](regulatory_profile) | Recording an Asset's CRA, DORA and NIS2 facts: critical or important function, CRA product class, support period, and vulnerability report contacts |
 | [Control Coverage](control_coverage) | Which 800-53 controls your scanners test, and open weaknesses per control |
+| [Certification Control Catalogs](certification_catalogs) | Assessing an Asset against ISO/IEC 27001, SOC 2 and NIS2, and the cross-framework Shared Evidence view |

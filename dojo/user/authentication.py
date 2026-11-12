@@ -1,12 +1,129 @@
+from datetime import timedelta
+
 from django.conf import settings
 from django.urls import reverse
 from django.utils import timezone
+from django_ratelimit import ALL
+from django_ratelimit.core import is_ratelimited
+from drf_spectacular.extensions import OpenApiAuthenticationExtension
+from rest_framework.authentication import BasicAuthentication, TokenAuthentication
 from rest_framework.authtoken.models import Token
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied, Throttled, ValidationError
 
 from dojo.authorization.authorization import user_is_superuser_or_global_owner
 from dojo.models import Dojo_User, UserContactInfo
 from dojo.notifications.helper import create_notification
+
+
+def default_expiry_days() -> int:
+    """Instance-wide token lifetime in days. 0 (the default) means tokens never expire."""
+    try:
+        days = int(getattr(settings, "API_TOKEN_DEFAULT_EXPIRY_DAYS", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(days, 0)
+
+
+def token_expires_at(token: Token):
+    """
+    Effective expiry for a token, or None when it never expires.
+
+    An explicit ``token_expiry`` on the owner's contact info wins, so a superuser can pin or
+    extend a single user. Otherwise the instance-wide default is measured from the token's own
+    ``created`` timestamp.
+
+    Deriving the default from ``created`` rather than stamping an expiry at creation time is
+    deliberate: tokens are minted by three separate paths (``reset_token_for_user``, the lazy
+    create on the UI key page, and DRF's ``api-token-auth`` endpoint), and a stamping approach
+    silently grants an unexpiring token to anyone who uses a path that forgot to stamp.
+    Computing it here covers every path, including any added later.
+    """
+    uci = getattr(token.user, "usercontactinfo", None)
+    explicit = getattr(uci, "token_expiry", None)
+    if explicit:
+        return explicit
+    days = default_expiry_days()
+    if days and token.created:
+        return token.created + timedelta(days=days)
+    return None
+
+
+def token_is_expired(token: Token) -> bool:
+    expires_at = token_expires_at(token)
+    return expires_at is not None and expires_at <= timezone.now()
+
+
+class ExpiringTokenAuthentication(TokenAuthentication):
+
+    """Token auth that also rejects expired tokens and accounts that owe a forced password reset."""
+
+    def authenticate_credentials(self, key):
+        user, token = super().authenticate_credentials(key)
+        if token_is_expired(token):
+            msg = "API token has expired."
+            raise AuthenticationFailed(msg)
+        if Dojo_User.force_password_reset(user):
+            msg = "A password reset is required before this account can use the API."
+            raise AuthenticationFailed(msg)
+        return user, token
+
+
+class DojoBasicAuthentication(BasicAuthentication):
+
+    """
+    HTTP Basic auth with the same account rules as the login page and the token endpoint.
+
+    An account that still owes a forced password reset is refused, as ``api-token-auth``
+    refuses it. With ``DD_RATE_LIMITER_BLOCK`` on, failed attempts for a username count
+    against ``DD_RATE_LIMITER_RATE`` the way failed logins do; successful requests are not
+    counted, so scripts using Basic auth are not throttled.
+    """
+
+    def authenticate_credentials(self, userid, password, request=None):
+        def limited(*, increment):
+            return request is not None and is_ratelimited(
+                request=request,
+                group="dojo.api.basic_auth",
+                key=lambda _group, _request: (userid or "").lower(),
+                rate=getattr(settings, "RATE_LIMITER_RATE", None),
+                method=ALL,
+                increment=increment,
+            )
+
+        block = getattr(settings, "RATE_LIMITER_BLOCK", False)
+        if block and limited(increment=False):
+            raise Throttled
+        try:
+            user, auth = super().authenticate_credentials(userid, password, request)
+        except AuthenticationFailed:
+            if block:
+                limited(increment=True)
+            raise
+        if Dojo_User.force_password_reset(user):
+            msg = "A password reset is required before this account can use the API."
+            raise AuthenticationFailed(msg)
+        return user, auth
+
+
+class DojoBasicAuthenticationScheme(OpenApiAuthenticationExtension):
+
+    """
+    OpenAPI scheme for DojoBasicAuthentication.
+
+    drf-spectacular's own Basic scheme does not match subclasses, so the subclass is
+    registered under the same name and the generated schema is unchanged.
+    """
+
+    target_class = "dojo.user.authentication.DojoBasicAuthentication"
+    name = "basicAuth"
+
+    def get_security_definition(self, auto_schema):
+        return {"type": "http", "scheme": "basic"}
+
+
+def revoke_api_token(user) -> None:
+    """Delete the user's API token, if any."""
+    Token.objects.filter(user_id=user.pk).delete()
 
 
 def reset_token_for_user(*, acting_user: Dojo_User, target_user: Dojo_User, allow_self_reset: bool = False) -> None:
@@ -31,9 +148,13 @@ def reset_token_for_user(*, acting_user: Dojo_User, target_user: Dojo_User, allo
     Token.objects.filter(user=target_user).delete()
     Token.objects.create(user=target_user)
 
+    # Clear any explicit expiry: it belonged to the token just replaced, and a past datetime
+    # left behind would expire the new token immediately. The instance-wide default still
+    # applies, measured from the new token's creation time.
     uci, _ = UserContactInfo.objects.get_or_create(user=target_user)
     uci.token_last_reset = timezone.now()
-    uci.save(update_fields=["token_last_reset"])
+    uci.token_expiry = None
+    uci.save(update_fields=["token_last_reset", "token_expiry"])
 
     # Send notification to the target user
     if acting_user == target_user:

@@ -7,7 +7,6 @@ from django.urls import reverse
 from django.utils import timezone
 
 from dojo.celery import app
-from dojo.celery_dispatch import dojo_dispatch_task
 from dojo.models import (
     Dojo_User,
     Engagement,
@@ -83,10 +82,10 @@ def add_alerts(self, *args, **kwargs):
         # Lazy import: dojo.utils imports create_notification from this module's
         # sibling (helper.py) at top-of-file, so importing dojo.utils eagerly here
         # creates a circular import during Django startup.
-        from dojo.utils import calculate_grade  # noqa: PLC0415
+        from dojo.utils import schedule_product_grade  # noqa: PLC0415
         products = Product.objects.all()
         for product in products:
-            dojo_dispatch_task(calculate_grade, product.id)
+            schedule_product_grade(product.id)
 
 
 @app.task(bind=True)
@@ -199,6 +198,17 @@ def async_create_notification(
         if finding is None:
             return
         kwargs["finding"] = finding
+
+    # Lists of findings the message names (scan_added's new/mitigated/... slices), sent
+    # as ordered ids because instances do not cross the broker. Loaded back in the order
+    # the caller chose, with the fields the templates read.
+    finding_ids = kwargs.pop("finding_ids", None) or {}
+    wanted = {i for ids in finding_ids.values() for i in ids}
+    by_id = Finding.objects.filter(id__in=wanted).only(
+        "id", "title", "severity", "numerical_severity", "duplicate",
+    ).in_bulk() if wanted else {}
+    for key, ids in finding_ids.items():
+        kwargs[key] = [by_id[i] for i in ids if i in by_id]
 
     # Resolve via the helper module so unit tests that patch
     # `dojo.notifications.helper.create_notification` capture this call.

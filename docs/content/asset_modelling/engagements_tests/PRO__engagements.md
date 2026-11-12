@@ -44,17 +44,16 @@ As the containers that organize testing activity, Engagements can store or track
 - Assignee / Lead
 - Associated Tests (e.g., scans, pen tests, manual tests, etc.)
 - Findings and Finding Types (e.g., active, mitigated, risk accepted, duplicate, etc.) 
-- Threat models or risk acceptance info
+- Threat models (if enabled)
 - Tags
 - Files and notes
 - Jira project settings
-- Environment details (e.g., staging vs. production)
 - Build IDs (if linked to CI/CD)
 - Historical data from past Tests within the Engagement 
 
 ## Accessing Engagements 
 
-Engagements are accessible via the sidebar. The submenu provides access to Active Engagements and All Engagements, as well as the option to create new Engagements.
+Engagements are accessible from the sidebar under **Act > Explore > Engagements**. The submenu provides access to **Active** and **All** Engagements; new Engagements are created with the **New Engagement** button at the top of either list.
 
 ![image](images/engagement_ss13.png)
 
@@ -74,7 +73,7 @@ Before creating an Engagement, you must first have [created an Asset](/asset_mod
 
 There are several ways to create an Engagement: 
 
-- Within the Engagements dropdown in the Manage section of the sidebar
+- From the **New Engagement** button at the top of the Engagement list (**Act > Explore > Engagements > All**)
     - You will have to select the Asset to which to attribute the Engagement when completing the New Engagement form
 
 ![image](images/engagement_ss1.png)
@@ -95,9 +94,16 @@ Every Engagement must have the following fields defined:
 - Type (Interactive or CI/CD)
 - A unique name 
 - Target start and end dates 
-    - This will determine the Engagement’s appearance in the Calendar section
+    - This will determine the Engagement’s appearance in the Calendar (**Overview > Calendar**)
 - Asset 
 - Status 
+
+When you start from an Asset — the gear icon, the “+ New Engagement” button, or a
+link that already names the Asset — the Asset field arrives filled in and locked, so
+it cannot be pointed at a different Asset by mistake. A locked field cannot be opened
+or selected with the mouse, so it carries a copy button on its right-hand edge that
+puts the value on your clipboard. The same applies anywhere a field is pre-filled from
+context, such as the Engagement and Scan Type fields when adding a Test.
 
 #### Engagement Statuses 
 
@@ -121,11 +127,25 @@ Engagements can be edited by clicking **Edit Engagement** from within the gear m
 
 All ensuing fields that can be edited are also available when the Engagement is being created. 
 
+Changing the Asset field moves the Engagement, along with its Tests and Findings, to the selected Asset. Before saving that change, DefectDojo asks you to confirm the move and names both the current and the new Asset.
+
 ![image](images/engagements_ss99.png)
+
+#### Change a Field in Place
+
+A few fields can also be changed on the Engagement page itself, without opening Edit Engagement: the **Name** and **Tags** in the page header, and **Status**, **Lead**, **Start Date**, **End Date** and **Description** wherever the page layout shows them. Click a highlighted value to open a small editor under it. **Enter**, or clicking anywhere else, keeps the change (marked **Unsaved**) and **Esc** puts the value back; change as many fields as you like, then **Save Changes** in the card at the bottom of the page saves them all at once.
+
+* **Status** can be changed in place only on an Interactive Engagement, and offers the open statuses only. Completed and Cancelled stay with **Close Engagement** and **Reopen Engagement**, so a closed Engagement shows no status editor.
+* A date changed on its own still keeps the Start Date on or before the End Date.
+* If someone else changed the Engagement after you opened the page, nothing is overwritten: DefectDojo shows **Engagement Changed** and offers **Reload** or **Keep Editing**.
+
+The same rules as Findings apply: only users who can edit the Engagement can open a value, Form Configuration's hidden and required settings apply in place, and the **Inline Editing** feature flag turns it all off. See [Change a Field in Place](/triage_findings/findings_workflows/editing_findings/#change-a-field-in-place).
 
 ### Copy Engagements 
 
 You can easily duplicate Engagements by selecting “Copy Engagement” within the Engagement’s settings. This will create an exact copy of the original Engagement within the parent Asset, including the metadata, Tests, and Findings within it.
+
+Because the copy is always added to the same Asset, DefectDojo asks you to confirm before it copies anything. Once the copy is made, a notification confirms it and the new Engagement opens. To place an Engagement under a different Asset, edit the Engagement and change its Asset instead (see **Edit Engagements** above).
 
 ### Close Engagements 
 
@@ -168,6 +188,47 @@ For auditing purposes, it is recommended to close any completed Engagements, rat
 | **Close** | Marks as inactive; data remains; can be reopened | Yes (reopen) |
 | **Expire** | Visual warning only; optional auto-close; notifications | N/A |
 | **Delete** | Permanently removes Engagement, Tests, Findings, notes, files, and any Jira Epic mappings (Epics remain in Jira) | No |
+
+## Engagement Checklists
+
+A checklist records the review work a tester performed during an Engagement, across eight fixed
+security categories: Session, Encryption, Configuration, Authentication, Authorization, Data
+Input, Sensitive Data, and Other.
+
+Each category holds three things:
+
+- A **status**: Pass, Fail, or N/A. A category you have not looked at yet reads "Not Evaluated".
+- Any **Findings** that back up that status, linked from the Findings already in the Engagement.
+- A **note**, for the detail a status alone cannot carry.
+
+The checklist appears on the Engagement page. If the Engagement does not have one yet, the panel
+says so and offers to start one. The checklist is also available from the Engagement's settings
+menu, as **Complete Checklist** or **Edit Checklist**.
+
+### Filling in a Checklist
+
+Select **Complete Checklist** to open the form. You do not have to complete every category at
+once: a partial checklist saves, so you can record categories as the review progresses and return
+to it later. The Findings picker for each category is limited to the Findings in that Engagement,
+and to those you have permission to view.
+
+Once saved, the panel lists each category with its status, its note, and its linked Findings as
+chips you can select to open the Finding. The panel also shows who last saved the checklist and
+when.
+
+### Availability
+
+Checklists apply to **Interactive** Engagements only, because a checklist records testing a
+person performed. CI/CD Engagements collect automated scan results, so they do not offer one.
+
+Checklists can also be switched off for the whole instance. A superuser can clear **Enable
+checklists** in System Settings, which hides the checklist panel and its menu entry everywhere.
+
+### Permissions
+
+Viewing a checklist requires View permission on the Engagement. Creating or editing one requires
+Edit permission on the Engagement. Users without Edit permission see the checklist but are not
+offered the buttons to change it.
 
 ## Jira Integration
 

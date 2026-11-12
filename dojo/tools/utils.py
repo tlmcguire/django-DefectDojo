@@ -118,3 +118,46 @@ def get_npm_cwe(item_node):
 
     # Use CWE-1035 as fallback (vulnerable third party component)
     return 1035
+
+
+#: Set on a parsed finding whose ``unique_id_from_tool`` cannot identify it once another finding
+#: in the same report carries the same value. The importer drops such repeats (see
+#: ``drop_ambiguous_repeated_unique_ids``) after its grouping step, where parsers used to drop them.
+AMBIGUOUS_WHEN_REPEATED = "unique_id_ambiguous_when_repeated"
+
+
+def mark_unique_ids_ambiguous_when_repeated(items):
+    """Mark every finding in ``items`` so the importer drops a tool id that repeats in the report. Returns ``items``."""
+    for item in items:
+        setattr(item, AMBIGUOUS_WHEN_REPEATED, True)
+    return items
+
+
+def drop_ambiguous_repeated_unique_ids(items):
+    """``drop_repeated_unique_ids`` over ``items`` when the parser marked them; otherwise leave them alone."""
+    if any(getattr(item, AMBIGUOUS_WHEN_REPEATED, False) for item in items):
+        drop_repeated_unique_ids(items)
+    return items
+
+
+def drop_repeated_unique_ids(items):
+    """
+    Drop a `unique_id_from_tool` that more than one finding in the same report carries.
+
+    A unique id that repeats inside its own report is not an identity. Scanners emit
+    constant placeholders (a live SARIF report carried the literal string "requires
+    login" on eleven findings), SARIF partial fingerprints hash line content so identical
+    lines collide, and a multi-location result becomes one finding per location, each
+    holding the result's single fingerprint. Downstream deduplication trusts
+    `unique_id_from_tool` equality, so keeping the value would merge findings that are
+    visibly different. Findings whose id is dropped deduplicate by hash code, exactly
+    like findings the scanner gave no id.
+    """
+    from collections import Counter  # noqa: PLC0415
+
+    counts = Counter(item.unique_id_from_tool for item in items if item.unique_id_from_tool)
+    repeated = {value for value, count in counts.items() if count > 1}
+    for item in items:
+        if item.unique_id_from_tool in repeated:
+            item.unique_id_from_tool = None
+    return items

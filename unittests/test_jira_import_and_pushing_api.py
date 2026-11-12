@@ -423,7 +423,10 @@ class JIRAImportAndPushTestApi(DojoVCRAPITestCase):
 
         pre_jira_status = self.get_jira_issue_status(finding_id)
 
-        response = self.add_risk_acceptance(1, data_risk_accceptance=ra_data)
+        # The push goes out once the risk acceptance is committed. The view runs in autocommit, where that is
+        # straight away; a test case never commits, so run each callback as it is registered, as autocommit does.
+        with patch("dojo.risk_acceptance.helper.transaction.on_commit", side_effect=lambda func, *_args, **_kwargs: func()):
+            response = self.add_risk_acceptance(1, data_risk_accceptance=ra_data)
         self.assertEqual("/engagement/1", response.url)
 
         # we don't do any explicit push to JIRA here as it should happen automatically
@@ -984,7 +987,7 @@ class JIRAImportAndPushTestApi(DojoVCRAPITestCase):
     @patch("dojo.jira.helper.can_be_pushed_to_jira", return_value=(True, None, None))
     @patch("dojo.jira.helper.is_push_all_issues", return_value=False)
     @patch("dojo.jira.helper.push_to_jira", return_value=None)
-    @patch("dojo.notifications.helper.send_webhooks_notification")
+    @patch("dojo.notifications.helper.WebhookNotificationManger.send_webhooks_notification")
     def test_bulk_edit_mixed_findings_and_groups_jira_push_bug(self, mock_webhooks, mock_push_to_jira, mock_is_push_all_issues, mock_can_be_pushed):
         """
         Test the bug in bulk edit: when bulk editing findings where some are in groups

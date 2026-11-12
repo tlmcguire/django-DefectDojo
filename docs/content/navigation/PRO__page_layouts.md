@@ -27,7 +27,7 @@ A **layout** is a saved arrangement of widgets for one page type. A layout you b
 Layouts come from three places:
 
 - **Shipped With DefectDojo**: a built-in layout for each of the six pages. This is what you see before you change anything.
-- **Your Layouts**: layouts you have created.
+- **Saved Layouts**: layouts you have created.
 - **Shared Templates**: layouts someone has published for everyone on the instance.
 
 ## The Page Layout menu
@@ -38,11 +38,11 @@ Every one of the six pages has a **Page Layout** button in its toolbar. Opening 
 - **New Layout**: create a layout from scratch or from an existing one.
 - **Manage Layouts**: open the full management dialog.
 
-Layouts in the list carry a marker showing where they came from: shipped with DefectDojo, a shared template, or your default.
+Layouts in the list carry a marker showing where they came from: shipped with DefectDojo, a shared template, or your **My Default**.
 
 ## Making your first change
 
-The shipped layouts are read only, so the first time you customize a page DefectDojo offers to make you a copy to work in. A **Create Your Own Layout** prompt appears, you give the layout a name, and **Create and Edit** puts you straight into edit mode on your new copy. The shipped layout is left untouched, so you can always go back to it.
+The shipped layouts are read only, so the first time you customize a page DefectDojo offers to make you a copy to work in. A **Create a Personal Layout** prompt appears, you give the layout a name, and **Create and Edit** puts you straight into edit mode on your new copy. The shipped layout is left untouched, so you can always go back to it.
 
 ## Editing a layout
 
@@ -54,7 +54,7 @@ In edit mode:
 - **Remove Widget** takes it off the layout. You can add it back later.
 - **Add Widget** opens the catalog of widgets available for that page.
 
-**Your changes are saved as you go.** There is no separate save step. **Done** leaves edit mode, and anything you changed is already stored.
+**Your changes are saved as you go.** There is no separate save step. **Done Editing** leaves edit mode, and anything you changed is already stored.
 
 ## Creating a layout from scratch
 
@@ -68,22 +68,27 @@ In edit mode:
 | --- | --- |
 | **Use Layout** | Switch to that layout. |
 | **Rename** | Change a layout's name. |
-| **Clone** | Copy a layout, including a shared or shipped one, into Your Layouts. |
+| **Clone** | Copy a layout, including a shared or shipped one, into Saved Layouts. |
 | **Delete** | Remove one of your layouts. |
-| **Set Default** / **Clear Default** | Choose which layout you personally land on for this page. |
+| **Set as My Default** / **Clear My Default** | Choose which layout you personally land on for this page. The layout carries a **My Default** tag. |
 | **Share** / **Unshare** | Publish one of your layouts as a shared template, or withdraw it. |
-| **Set Shared Default** / **Clear Shared Default** | Choose which layout everyone on the instance lands on for this page. |
+| **Set as Instance Default** / **Clear Instance Default** | Choose which layout everyone on the instance lands on for this page. A layout from a Default Profile reads **From <profile>**, or **Set by <profile>** when it is locked. |
 
-Sharing a layout and setting the instance-wide default require the **Page Layout Share** permission, which Maintainer and Owner hold by default. If you do not have it, the sharing controls are not shown. Publishing a shared template applies to the whole instance, not to a single Organization.
+Sharing a layout and setting the Instance Default require the **Page Layout Share** permission, which Maintainer and Owner hold by default. If you do not have it, the sharing controls are not shown. Publishing a shared template applies to the whole instance, not to a single Organization.
 
 ## Which layout you see
 
 When you open one of the six pages, DefectDojo picks the first of these that applies:
 
 1. The layout you last chose for that page.
-2. Your personal default, if you have set one.
-3. The instance-wide shared default, if an administrator has set one.
-4. The layout shipped with DefectDojo.
+2. Your own default (**My Default**), if you have set one.
+3. The layout from a [Default Profile](/admin/user_management/create_user_group/#defaults): the one assigned to you directly, else your Groups' profiles in rank order (the first that sets one wins).
+4. The **Instance Default**, if an administrator has set one.
+5. The layout shipped with DefectDojo.
+
+## Fields you can change in place
+
+On the Finding, Engagement and Asset pages, a field tile or a row of the details table can be changed where it sits when the field supports it and you can edit the record: the value is highlighted on hover, and a click opens its editor. On a Finding that is Severity, Assignees, Planned Remediation Date and Description; on an Engagement, Status, Lead, Start Date, End Date and Description; on an Asset, Business Criticality, Platform, Lifecycle and Description. Moving or resizing the widget does not change this. See [Change a Field in Place](/triage_findings/findings_workflows/editing_findings/#change-a-field-in-place).
 
 ## Widgets with nothing to show
 
@@ -93,15 +98,36 @@ This affects only what is drawn. Your layout is unchanged, and the widget reappe
 
 In edit mode those widgets are shown as labelled placeholders that say why they are not appearing, so you can still position them.
 
+### Hiding empty tabs
+
+A tab that holds a list, such as a table, Notes or Files, shows how many items it has beside its label, and a tab with none is dimmed, so an empty tab reads as empty before you open it.
+
+Some tabs in a tab group always show, even when they are empty, such as a table with no rows or a Notes feed with no notes. You can choose to hide them on records where they have nothing to show, one tab at a time:
+
+1. In edit mode, open **Configure Widget** on the tab group.
+2. Each tab's row has an eye button beside its delete button. Click it to switch between the open eye (the tab always shows) and the crossed-out eye (the tab is hidden when it is empty). Hover over the button to see what a click will do.
+3. Click **Submit**.
+
+Leave the eye open on a tab whose own button adds its first item, such as Notes or Files: hiding an empty Notes tab also hides **Add Note**.
+
+The eye is locked in two cases, and hovering over it says why:
+
+- **Crossed out and locked**: the tab already hides itself when it has nothing to show.
+- **Open and locked**: the tab cannot tell when it is empty (some charts and composite panels), so it always shows.
+
+A hidden tab comes back as soon as the record has something for it, the next time the page loads. In edit mode every tab is shown, with a note on the ones that are hidden outside edit mode.
+
 ## When customization is restricted
 
-An administrator can turn on **Restrict Layout Customization** in **Settings > UI Defaults > Layout Defaults**. With it on:
+An administrator can turn on **Restrict Layout Customization** in **Settings > Defaults > Instance Defaults** (the **Layout Customization** card). With it on:
 
 - Only superusers can create or change layouts.
-- Everyone else sees the layout designated as the default, or the shipped layout when none has been designated.
+- Everyone else sees the Instance Default layout, or the shipped layout when none has been set.
 - The Page Layout menu no longer offers the editing and management actions.
 
 Layouts you saved before the switch was turned on are kept. If it is turned back off, they are available again exactly as they were.
+
+A [Default Profile](/admin/user_management/create_user_group/#defaults) can override the switch for its Members (its Groups' Members and users it is assigned to directly) in either direction, with **Allow** or **Restrict to Selected Layouts**. The first profile in the resolution order that sets it decides. A profile can also set the layout each View page opens with, and under **Restrict to Selected Layouts** list the other layouts Members may switch to; the layout switcher then offers only those, with no edit menu. Superusers are never restricted.
 
 For the administrator's side of this, see [The Sidebar Menu](/navigation/pro__sidebar/).
 
@@ -110,8 +136,11 @@ For the administrator's side of this, see [The Sidebar Menu](/navigation/pro__si
 Which widgets a page offers depends on the page, and **Add Widget** shows what is available with a short description of each. Widgets come in four shapes:
 
 - **Panels** present the record's own fields as a list of labelled values.
-- **Tables** list related records, such as the Engagements on an Asset or the Findings on a Test. These behave like the product's other data tables, so you can pick columns and sort them.
+- **Tables** list related records, such as the Engagements on an Asset or the Findings on a Test. Most behave like the product's other data tables, so you can pick columns and sort them.
+  The **Engagements** table on an Asset is built to fit its tile instead. It keeps search, filters, sorting, export and your saved preferences (the filters and sort open from its **Filters** button), and shows a fixed set of columns: the engagement with its type, status, dates, lead and active findings. Lead and then dates give way as the tile narrows, and a narrow tile shows each engagement on two lines. The tile's header counts the open engagements past their end date, or the ones in progress when none is overdue.
 - **Feeds** present a running history in date order, such as notes on a record.
 - **Charts** plot the record's data, such as severity breakdowns and counts over time.
 
-Some widgets appear only when the feature behind them is available to you. For example, the **Automation History** widget on the Asset and Finding pages shows what the rules engine did to that record and why, so it is offered only when Rules Engine 2.0 is turned on and you hold Rule View.
+Some widgets appear only when the feature behind them is available to you. For example, the **Automation History** widget on the Asset and Finding pages shows what the rules engine did to that record and why, so it is offered only when Triage Engine is turned on and you hold Rule View.
+
+The record cards on the Asset page (**Organization Memberships**, **Asset Identity**, **Exposure** and **Regulatory**) and the **Member Assets** table at the top of the Organization page are widgets as well. The shipped Asset layout starts with the Open Finding Severity meter and places the cards after the Details row: Organization Memberships and Asset Identity side by side, then Exposure and Regulatory at full width. The shipped Organization layout places Member Assets first. A layout saved before the cards were widgets had them added above its own widgets, so nothing that was on the page went missing; one that was not rearranged since has them moved below its widgets, in the same arrangement as the shipped layout. Like any widget you can move, resize or remove them. Each one is shown only while the feature behind it is turned on.

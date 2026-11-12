@@ -11,7 +11,11 @@ from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm
 from django.contrib.auth.views import LoginView, PasswordResetConfirmView, PasswordResetView
 from django.contrib.humanize.templatetags.humanize import naturaltime
+from django.contrib.sites.models import Site
+from django.contrib.sites.requests import RequestSite
+from django.contrib.sites.shortcuts import get_current_site
 from django.core import serializers
+from django.core.cache import cache
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.mail import get_connection
 from django.core.mail.backends.smtp import EmailBackend
@@ -21,6 +25,7 @@ from django.db.models.deletion import RestrictedError
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
+from django.utils.crypto import salted_hmac
 from django.utils.timezone import now
 from django.utils.translation import gettext as _
 from rest_framework.authtoken.models import Token
@@ -37,8 +42,9 @@ from dojo.forms import (
     ConfigurationPermissionsForm,
 )
 from dojo.labels import get_labels
+from dojo.middleware import set_language_cookie
 from dojo.models import Alerts, Dojo_User, Product, Product_Type, UserContactInfo
-from dojo.user.authentication import reset_token_for_user
+from dojo.user.authentication import reset_token_for_user, revoke_api_token, token_expires_at
 from dojo.user.ui.filters import UserFilter
 from dojo.user.ui.forms import (
     AddDojoUserForm,
@@ -48,7 +54,13 @@ from dojo.user.ui.forms import (
     UserContactInfoForm,
 )
 from dojo.user.utils import user_may_delete_account
-from dojo.utils import add_breadcrumb, get_page_items, get_setting, get_system_setting
+from dojo.utils import (
+    add_breadcrumb,
+    get_page_items,
+    get_setting,
+    get_system_setting,
+    restricted_delete_reason,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +70,27 @@ labels = get_labels()
 class DojoLoginView(LoginView):
     template_name = "dojo/login.html"
     authentication_form = AuthenticationForm
+
+    def get_context_data(self, **kwargs):
+        # Django's LoginView.get_context_data() resolves the current Site via
+        # get_current_site(), which raises Site.DoesNotExist (surfacing as an
+        # HTTP 500 on the login page) when the django_site row referenced by
+        # SITE_ID is absent on an instance. Resolve the site defensively and
+        # fall back to a request-derived site -- mirroring what Django itself
+        # does when the sites framework is not installed -- so the login page
+        # always renders instead of 500ing.
+        try:
+            current_site = get_current_site(self.request)
+        except Site.DoesNotExist:
+            current_site = RequestSite(self.request)
+        context = super(LoginView, self).get_context_data(**kwargs)
+        context.update({
+            self.redirect_field_name: self.get_redirect_url(),
+            "site": current_site,
+            "site_name": current_site.name,
+            **(self.extra_context or {}),
+        })
+        return context
 
     def form_valid(self, form):
         last_login = None
@@ -108,18 +141,28 @@ def api_v2_key(request):
             api_key = Token.objects.create(user=request.user)
     add_breadcrumb(title=_("API Key"), top_level=True, request=request)
 
+    # Show the effective expiry (explicit override, else the instance-wide default measured from
+    # the token's creation), so the page never claims a token is permanent when it is not.
+    token_expiry = token_expires_at(api_key) if isinstance(api_key, Token) else None
+
     return render(request, "dojo/api_v2_key.html",
                   {"name": _("API v2 Key"),
                    "metric": False,
                    "user": request.user,
                    "key": api_key,
+                   "token_expiry": token_expiry,
                    "form": form,
                    })
 
 
 # #  user specific
+def login_password_ratelimit_key(group, request):
+    """Group login attempts by password, keyed with an HMAC rather than the raw value."""
+    return salted_hmac("dojo.login.ratelimit", request.POST.get("password", "")).hexdigest()
+
+
 @dojo_ratelimit(key="post:username")
-@dojo_ratelimit(key="post:password")
+@dojo_ratelimit(key=login_password_ratelimit_key)
 def login_view(request):
     return DojoLoginView.as_view(template_name="dojo/login.html", authentication_form=AuthenticationForm)(request)
 
@@ -226,12 +269,14 @@ def view_profile(request):
                                  messages.SUCCESS,
                                  _("Profile updated successfully."),
                                  extra_tags="alert-success")
-            # Redirect so the response renders against a fresh request — this
-            # ensures UIPreferenceLoader and the UI-toggle banner read the
-            # just-saved usercontactinfo (e.g. ui_use_tailwind) instead of any
-            # state cached on the POST request. Also prevents form
-            # resubmission on refresh.
-            return HttpResponseRedirect(reverse("view_profile"))
+            # Redirect so the response renders against a fresh request, reading
+            # the just-saved usercontactinfo instead of any state cached on the
+            # POST request. Also prevents form resubmission on refresh.
+            response = HttpResponseRedirect(reverse("view_profile"))
+            # Reflect a language change immediately on this device by refreshing
+            # the cookie LocaleMiddleware reads; other devices pick the preference
+            # up from UserContactInfo on their next browser session.
+            return set_language_cookie(response, contact.language)
     add_breadcrumb(title=_("User Profile - %(user_full_name)s") % {"user_full_name": user.get_full_name()}, top_level=True, request=request)
     return render(request, "dojo/profile.html", {
         "user": user,
@@ -465,7 +510,7 @@ def delete_user(request, uid):
                     except RestrictedError as err:
                         messages.add_message(request,
                                             messages.WARNING,
-                                            _("User cannot be deleted: %(error)s") % {"error": err},
+                                            _("User cannot be deleted: %(error)s") % {"error": restricted_delete_reason(err)},
                                             extra_tags="alert-warning")
                     return HttpResponseRedirect(reverse("users"))
 
@@ -585,9 +630,34 @@ def edit_permissions(request, uid):
     return HttpResponseRedirect(reverse("view_user", args=(uid,)))
 
 
+def account_email_allowed(kind, to_email):
+    """
+    Whether another account-recovery email of ``kind`` may go to ``to_email`` this hour.
+
+    The forms answer the same way whether or not a message is sent, so an address that has
+    reached the limit just stops receiving mail for the rest of the window.
+    """
+    limit = settings.ACCOUNT_RECOVERY_EMAILS_PER_HOUR
+    if limit <= 0:
+        return True
+    key = "dojo:account-email:" + salted_hmac(f"dojo.account-email.{kind}", (to_email or "").lower()).hexdigest()
+    cache.add(key, 0, timeout=3600)
+    try:
+        count = cache.incr(key)
+    except ValueError:
+        cache.set(key, 1, timeout=3600)
+        count = 1
+    if count > limit:
+        logger.info("Not sending another %s email this hour: limit of %d reached for the address", kind, limit)
+        return False
+    return True
+
+
 class DojoForgotUsernameForm(PasswordResetForm):
     def send_mail(self, subject_template_name, email_template_name,
                   context, from_email, to_email, html_email_template_name=None):
+        if not account_email_allowed("forgot_username", to_email):
+            return
 
         from_email = get_system_setting("email_from")
 
@@ -614,6 +684,8 @@ class DojoForgotUsernameForm(PasswordResetForm):
 class DojoPasswordResetForm(PasswordResetForm):
     def send_mail(self, subject_template_name, email_template_name,
                   context, from_email, to_email, html_email_template_name=None):
+        if not account_email_allowed("password_reset", to_email):
+            return
 
         from_email = get_system_setting("email_from")
 
@@ -656,4 +728,7 @@ class DojoPasswordResetConfirmView(PasswordResetConfirmView):
         uci, _created = UserContactInfo.objects.get_or_create(user=user)
         uci.password_last_reset = now()
         uci.save(update_fields=["password_last_reset"])
+        # A reset through the emailed link is account recovery: the API token is a second
+        # credential the old password may have been used to obtain, so it is revoked too.
+        revoke_api_token(user)
         return response

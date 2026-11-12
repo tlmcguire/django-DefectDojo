@@ -22,7 +22,7 @@ from django.test import override_settings
 from django.utils import timezone
 
 from dojo.location.models import Location, LocationFindingReference, LocationProductReference
-from dojo.models import Endpoint, Engagement, Finding, Product, Product_Type, Test, Test_Type
+from dojo.models import Dojo_User, Endpoint, Engagement, Finding, Product, Product_Type, Test, Test_Type
 from dojo.tags.inheritance import propagate_tags_on_product_sync
 from unittests.dojo_test_case import (
     DojoAPITestCase,
@@ -469,6 +469,10 @@ class TagInheritanceImportPerfBaselines(DojoAPITestCase):
         super().setUp()
         self.login_as_admin()
         self.system_settings(enable_product_tag_inheritance=True)
+        # Superusers always receive the import notifications, and the two fixture variants
+        # (dojo_testdata.json / dojo_testdata_locations.json) disagree on user5's superuser
+        # flag. Pin it so the recipient count, and with it the query count, is the same in both.
+        Dojo_User.objects.filter(username="user5").update(is_superuser=False)
         self.product = self.create_product("Tag Perf Import Product", tags=["inherit", "these"])
         self.engagement = self.create_engagement("Tag Perf Import Engagement", self.product)
         self.scan_path = get_unit_tests_scans_path("zap") / "dvwa_baseline_dojo.xml"
@@ -619,15 +623,45 @@ class TagInheritanceImportPerfBaselines(DojoAPITestCase):
     # for the reference and CWE buffers it shares, then flush_burp_request_response()
     # resolves its own for the request/response rows the ZAP parser attaches. The
     # no-change reimport buffers nothing, so it takes no lookup and is unchanged.
-    # +2 on the V3 paths only: the batch deduplication loader now prefetches
-    # locations__location__url instead of the deprecated endpoints m2m, whose
-    # Endpoint.__init__ raises under V3. The locations lookup traverses two more
-    # relations than the single-join endpoints prefetch it replaces, so it costs two
-    # extra queries per load. The V2 counts are untouched because that branch still
+    # +2 on the V3 paths only: the dedupe loader (get_finding_models_for_deduplication)
+    # prefetches the locations__location__url chain (3 queries) instead of the
+    # deprecated endpoints m2m (1 query), whose Endpoint.__init__ raises under V3. That
+    # cost is per post-processing batch — one loader call per import — and is what
+    # removes the per-candidate-pair location queries in are_locations_duplicates, so it
+    # doesn't scale with findings. The V2 counts are untouched because that branch still
     # prefetches endpoints.
-    EXPECTED_ZAP_IMPORT_V2 = 293
-    EXPECTED_ZAP_IMPORT_V3 = 318
-    EXPECTED_ZAP_REIMPORT_NO_CHANGE_V2 = 74
-    EXPECTED_ZAP_REIMPORT_NO_CHANGE_V3 = 87
-    EXPECTED_ZAP_REIMPORT_WITH_NEW_V2 = 158
-    EXPECTED_ZAP_REIMPORT_WITH_NEW_V3 = 188
+    # -2 on the V3 reimport paths: LocationManager.persist() used to open
+    # transaction.atomic() even with nothing buffered, and inside the test's outer
+    # atomic block that empty transaction is a SAVEPOINT/RELEASE pair. Both steps
+    # inside it already short-circuit on empty accumulators, so persist() now returns
+    # before opening it. A reimport calls persist() at the batch boundary and again
+    # from close_old_findings; the one with nothing to write is the pair that goes.
+    # V2 is unaffected -- EndpointManager.persist() opens no transaction -- which is
+    # why only the V3 reimport constants absorb it (the import path buffers locations,
+    # so its persist() still opens the transaction and keeps the +2 in full).
+    # -1 on both reimport-with-new paths, on top of everything above: DefaultReImporter
+    # now queues a matching batch's new findings in _pending_new_findings and persists/
+    # post-processes them together via _drain_pending_new_findings once the batch's
+    # matching loop finishes, instead of saving each one inline as soon as it fails to
+    # match (see process_finding_that_was_not_matched and _drain_pending_new_findings).
+    # Reimport-no-change is unaffected because it creates no new findings to defer.
+    # +7 import, +5 reimport-no-change, +6 reimport-with-new (measured, both modes):
+    # scan_added is dispatched through async_create_notification with ids instead of
+    # being built in the request, so the task (run inline here under
+    # CELERY_TASK_ALWAYS_EAGER) loads the test chain and the listed findings back by id
+    # and resolves recipients there. The fan-out writes alerts in one bulk insert, so
+    # the recipient count no longer moves the total: pinning user5 to non-superuser
+    # (which took 12 import / 6 reimport-with-new queries off the per-recipient path)
+    # measures the same with and without the pin on this path.
+    # -4 import, -16 on both reimport paths (measured, both modes): the permission
+    # check, the view and the serializer share one AutoCreateContextManager per
+    # request (AutoCreateContextManager.for_request), so the product type, product,
+    # engagement and test lookups run once per request with their parents
+    # select_related, and the statistics are read in one grouped query (per queryset,
+    # and across all import actions) instead of an extra aggregate per set.
+    EXPECTED_ZAP_IMPORT_V2 = 285
+    EXPECTED_ZAP_IMPORT_V3 = 311
+    EXPECTED_ZAP_REIMPORT_NO_CHANGE_V2 = 64
+    EXPECTED_ZAP_REIMPORT_NO_CHANGE_V3 = 75
+    EXPECTED_ZAP_REIMPORT_WITH_NEW_V2 = 143
+    EXPECTED_ZAP_REIMPORT_WITH_NEW_V3 = 172

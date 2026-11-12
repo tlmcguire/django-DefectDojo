@@ -4,15 +4,15 @@ from contextlib import suppress
 from datetime import datetime
 from itertools import batched
 from time import sleep, strftime
+from types import SimpleNamespace
 
 from django.conf import settings
-from django.db import OperationalError, transaction
+from django.db import OperationalError, router, transaction
 from django.db.models import Count
 from django.db.models.query_utils import Q
-from django.db.models.signals import post_delete, pre_delete
+from django.db.models.signals import post_delete, post_save, pre_delete
 from django.db.utils import IntegrityError
 from django.dispatch.dispatcher import receiver
-from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.timezone import is_naive, make_aware, now
@@ -31,7 +31,7 @@ from dojo.finding.deduplication import (
     do_false_positive_history_batch,
     get_finding_models_for_deduplication,
 )
-from dojo.finding.queries import prefetch_for_findings
+from dojo.importers.import_lock import lock_tests_of_findings_under_import, unlock_tests_under_import
 from dojo.jira import services as jira_services
 from dojo.location.feature import locations_enabled
 from dojo.location.models import Location
@@ -55,10 +55,10 @@ from dojo.notifications.helper import create_notification
 from dojo.tools import tool_issue_updater
 from dojo.url.models import URL
 from dojo.utils import (
-    calculate_grade,
     close_external_issue,
     get_current_user,
     get_object_or_none,
+    schedule_product_grade,
     to_str_typed,
 )
 from dojo.vulnerability.manager import persist_for_finding
@@ -188,22 +188,42 @@ def update_finding_status(new_state_finding, user, changed_fields=None):
     new_state_finding.last_status_update = now
 
 
-def filter_findings_by_existence(findings):
-    """
-    Return only findings that still exist in the database (by id).
+# Bounds the IN clause of the existence lookup below. An import's result set is not
+# bounded by anything else, so without this a large scan asks the database about tens of
+# thousands of ids in one statement.
+FINDING_EXISTENCE_CHUNK = 1000
 
-    Centralized helper used by importers to avoid FK violations during
-    bulk_create.
+
+def deleted_finding_ids(finding_ids) -> set[int]:
     """
-    if not findings:
-        return []
-    candidate_ids = [finding.id for finding in findings if getattr(finding, "id", None)]
-    if not candidate_ids:
-        return []
-    existing_ids = set(
-        Finding.objects.filter(id__in=candidate_ids).values_list("id", flat=True),
-    )
-    return [finding for finding in findings if finding.id in existing_ids]
+    Of the given finding ids, the ones whose row is no longer in the database.
+
+    The single place that answers "which of these findings are gone", for every caller
+    holding finding references across a window in which a finding can be deleted --
+    import history records, the child-row buffers flushed at an import batch boundary,
+    and anything else that would otherwise insert a dangling reference or re-save a
+    deleted row. Those references are only rejected at COMMIT (Django declares its
+    foreign keys DEFERRABLE INITIALLY DEFERRED), far from the code that wrote them, so
+    the check has to happen before the write rather than around it.
+
+    Returns the missing ids rather than the survivors: it is the smaller set, and every
+    caller wants it to skip work rather than to drive it. Costs one indexed primary-key
+    lookup per FINDING_EXISTENCE_CHUNK ids, and no query at all for an empty input.
+
+    Note for callers that already read rows for these findings: existence falls out of
+    any such read for free (see _sync_close_old_finding_status_fields, which learns it
+    from the refresh it needs anyway). Do not route those through here -- it buys
+    consistency with an extra round trip.
+    """
+    finding_ids = {finding_id for finding_id in finding_ids if finding_id is not None}
+    if not finding_ids:
+        return set()
+    live_finding_ids: set[int] = set()
+    for chunk in batched(finding_ids, FINDING_EXISTENCE_CHUNK, strict=False):
+        live_finding_ids.update(
+            Finding.objects.filter(pk__in=chunk).values_list("pk", flat=True),
+        )
+    return finding_ids - live_finding_ids
 
 
 def can_edit_mitigated_data(user):
@@ -234,7 +254,10 @@ def create_finding_group(finds, finding_group_name):
         else:
             raise
 
-    available_findings = [find for find in finds if not find.finding_group_set.all()]
+    available_findings = [
+        find for find in finds
+        if not find.finding_group_set.all() and find.test_id == finding_group.test_id
+    ]
     finding_group.findings.set(available_findings)
 
     added = len(available_findings)
@@ -245,7 +268,10 @@ def create_finding_group(finds, finding_group_name):
 def add_to_finding_group(finding_group, finds):
     added = 0
     skipped = 0
-    available_findings = [find for find in finds if not find.finding_group_set.all()]
+    available_findings = [
+        find for find in finds
+        if not find.finding_group_set.all() and find.test_id == finding_group.test_id
+    ]
     finding_group.findings.add(*available_findings)
 
     # Now update the JIRA to add the finding to the finding group
@@ -361,43 +387,86 @@ def group_findings_by(finds, finding_group_by_option):
     return affected_groups, grouped, skipped, groups_created
 
 
-def add_findings_to_auto_group(name, findings, group_by, *, create_finding_groups_for_all_findings=True, **kwargs):
-    if name is not None and findings is not None and len(findings) > 0:
-        creator = get_current_user()
-        test = findings[0].test
+def _test_finding_ids_by_group_name(test_id, group_by, names):
+    """Ids of the test's findings per group name, for the given names only, read in one pass."""
+    fields = ("id", "title", "component_name", "component_version", "file_path", "vuln_id_from_tool")
+    by_name = {}
+    # Plain values, not Finding instances: get_group_by_group_name only reads these attributes, and
+    # building a model instance per row is what made a large test expensive to scan.
+    for row in Finding.objects.filter(test_id=test_id).order_by("id").values(*fields).iterator(chunk_size=2000):
+        group_name = get_group_by_group_name(SimpleNamespace(**row), group_by)
+        if group_name in names:
+            by_name.setdefault(group_name, []).append(row["id"])
+    return by_name
 
-        if create_finding_groups_for_all_findings or len(findings) > 1:
-            # Only create a finding group if we have more than one finding for a given finding group, unless configured otherwise
-            finding_group, created = Finding_Group.objects.get_or_create(test=test, creator=creator, name=name[:255])
-            if created:
-                logger.debug("Created Finding Group %d:%s for test %d:%s", finding_group.id, finding_group, test.id, test)
-                # See if we have old findings in the same test that were created without a finding group
-                # that should be added to this new group
-                old_findings = Finding.objects.filter(test=test)
-                for f in old_findings:
-                    f_group_name = get_group_by_group_name(f, group_by)
-                    if f_group_name == name and f not in findings:
-                        finding_group.findings.add(f)
 
-            finding_group.findings.add(*findings)
-        else:
-            # Otherwise add to an existing finding group if it exists only
-            try:
-                finding_group = Finding_Group.objects.get(test=test, name=name)
-                if finding_group:
-                    finding_group.findings.add(*findings)
-            except:
-                # See if we have old findings in the same test that were created without a finding group
-                # that match this new finding - then we can create a finding group
-                old_findings = Finding.objects.filter(test=test)
-                created = False
-                for f in old_findings:
-                    f_group_name = get_group_by_group_name(f, group_by)
-                    if f_group_name == name and f not in findings:
-                        finding_group, created = Finding_Group.objects.get_or_create(test=test, creator=creator, name=name[:255])
-                        finding_group.findings.add(f)
-                if created:
-                    finding_group.findings.add(*findings)
+def add_findings_to_auto_groups(group_names_to_findings, group_by, *, create_finding_groups_for_all_findings=True, **kwargs):
+    """
+    Put the findings of one (re)import into their auto groups, all names at once.
+
+    For each name: reuse the oldest group of that (test, name), else create one (unless
+    create_finding_groups_for_all_findings is off and the name has a lone finding no other
+    finding of the test shares). A newly created group also takes the test's other findings
+    with the same name. The cost does not grow with the number of groups: existing groups
+    are read in one query, the test's findings once (and only when some name has no group
+    yet), and new groups and memberships are written in bulk.
+
+    bulk_create sends no post_save, so it is replayed once per new group with
+    ``bulk_created_instances`` set to the whole batch: a receiver keeps working one group at
+    a time, or can handle the batch in one go.
+    """
+    group_names_to_findings = {name: findings for name, findings in group_names_to_findings.items() if name is not None and findings}
+    if not group_names_to_findings:
+        return
+    test_id = next(iter(group_names_to_findings.values()))[0].test_id
+
+    # Groups are one per (test, name[:255]); the oldest wins where duplicates exist.
+    groups = {}
+    for finding_group in Finding_Group.objects.filter(test_id=test_id, name__in={name[:255] for name in group_names_to_findings}).order_by("id"):
+        groups.setdefault(finding_group.name, finding_group)
+    # A name without a group needs the test's other findings of that name: they decide
+    # whether a lone finding forms a group, and a new group takes them in.
+    missing = {name for name in group_names_to_findings if name[:255] not in groups}
+    others = _test_finding_ids_by_group_name(test_id, group_by, missing) if missing else {}
+
+    creator = get_current_user()
+    new_groups = []
+    members = defaultdict(dict)  # stored name -> finding ids, dict for ordered de-duplication
+    for name, findings in group_names_to_findings.items():
+        key = name[:255]
+        finding_ids = [finding.id for finding in findings]
+        if key not in groups:
+            imported = set(finding_ids)
+            old_ids = [finding_id for finding_id in others.get(name, []) if finding_id not in imported]
+            if not (create_finding_groups_for_all_findings or len(findings) > 1 or old_ids):
+                # a lone finding nothing else in the test shares a name with stays ungrouped
+                continue
+            groups[key] = Finding_Group(test_id=test_id, creator=creator, name=key)
+            new_groups.append(groups[key])
+            members[key].update(dict.fromkeys(old_ids))
+        members[key].update(dict.fromkeys(finding_ids))
+
+    with transaction.atomic():
+        if new_groups:
+            Finding_Group.objects.bulk_create(new_groups)
+            db = router.db_for_write(Finding_Group)
+            for finding_group in new_groups:
+                logger.debug("Created Finding Group %d:%s for test %d", finding_group.id, finding_group, test_id)
+                post_save.send(
+                    sender=Finding_Group, instance=finding_group, created=True, update_fields=None, raw=False, using=db,
+                    bulk_created_instances=new_groups,
+                )
+        through = Finding_Group.findings.through
+        # ignore_conflicts keeps findings.add()'s "already a member" no-op
+        through.objects.bulk_create(
+            [
+                through(finding_group_id=groups[key].id, finding_id=finding_id)
+                for key, finding_ids in members.items()
+                for finding_id in finding_ids
+            ],
+            ignore_conflicts=True,
+            batch_size=1000,
+        )
 
 
 @app.task
@@ -444,9 +513,7 @@ def post_process_finding_save_internal(finding, dedupe_option=True, rules_option
 
     if product_grading_option:
         if system_settings.enable_product_grade:
-            from dojo.celery_dispatch import dojo_dispatch_task  # noqa: PLC0415 circular import
-
-            dojo_dispatch_task(calculate_grade, finding.test.engagement.product.id)
+            schedule_product_grade(finding.test.engagement.product.id)
         else:
             deduplicationLogger.debug("skipping product grading because it's disabled in system settings")
 
@@ -512,6 +579,33 @@ def post_process_findings_batch(
     if not finding_ids:
         return
 
+    # Deduplication may mark these findings duplicate, and everything below goes on writing them,
+    # so hold the import lock on their tests until it is done (see dojo.importers.import_lock).
+    locked_tests = lock_tests_of_findings_under_import(finding_ids)
+    try:
+        _post_process_findings_batch(
+            finding_ids,
+            dedupe_option=dedupe_option,
+            product_grading_option=product_grading_option,
+            issue_updater_option=issue_updater_option,
+            push_to_jira=push_to_jira,
+            jira_instance_id=jira_instance_id,
+            force_sync=force_sync,
+        )
+    finally:
+        unlock_tests_under_import(locked_tests)
+
+
+def _post_process_findings_batch(
+    finding_ids,
+    *,
+    dedupe_option,
+    product_grading_option,
+    issue_updater_option,
+    push_to_jira,
+    jira_instance_id,
+    force_sync,
+):
     system_settings = System_Settings.objects.get()
 
     # The status-changing dedup / false-positive-history writes below update dojo_finding
@@ -563,9 +657,7 @@ def post_process_findings_batch(
             tool_issue_updater.async_tool_issue_update(finding)
 
     if product_grading_option and system_settings.enable_product_grade:
-        from dojo.celery_dispatch import dojo_dispatch_task  # noqa: PLC0415 circular import
-
-        dojo_dispatch_task(calculate_grade, findings[0].test.engagement.product.id, force_sync=force_sync)
+        schedule_product_grade(findings[0].test.engagement.product.id, force_sync=force_sync)
 
     # If we received the ID of a jira instance, then we need to determine the keep in sync behavior
     jira_instance = None
@@ -1037,6 +1129,32 @@ def _resolve_surviving_root(start_id, parent_of_doomed):
     return current  # A surviving finding id, or None when the chain dead-ends.
 
 
+def lock_findings_for_delete(finding_ids):
+    """
+    Row-lock ``finding_ids`` FOR UPDATE, in id order, for the rest of the transaction.
+
+    Deduplication locks each original FOR KEY SHARE before it writes a duplicate link to
+    it (see dojo.finding.deduplication._drop_links_to_deleted_originals), and Postgres
+    takes the same lock on the finding when it checks the deferred foreign key of any
+    other row that references it; both conflict with FOR UPDATE. Taken as the chunk's
+    first statement, before bulk_clear_finding_m2m, the cascade and
+    resolve_inbound_duplicate_references read anything, this makes those reads final: a
+    writer that already holds a lock on one of these findings commits first, and its rows
+    are then visible to them; a writer that comes later waits for this delete to commit
+    and then finds the finding gone.
+
+    One statement ordered by id, like the dedup flush's lock, so the two cannot each hold
+    a row the other is waiting for.
+    """
+    return list(
+        Finding.objects
+        .select_for_update()
+        .filter(id__in=finding_ids)
+        .order_by("id")
+        .values_list("id", flat=True),
+    )
+
+
 def resolve_inbound_duplicate_references(chunk_ids, delete_scope_ids):
     """
     Resolve ``duplicate_finding`` references into ``chunk_ids`` held by findings that survive.
@@ -1050,7 +1168,11 @@ def resolve_inbound_duplicate_references(chunk_ids, delete_scope_ids):
     does. Resolving once up front leaves every chunk after the first exposed: each chunk
     commits separately, so a reference written after that one pass -- deduplication of a
     concurrent import landing on an original this run has selected but not yet reached --
-    survives into a later chunk's COMMIT. Run per chunk, no such window exists.
+    survives into a later chunk's COMMIT. Running per chunk only narrows that window to
+    this read and the chunk's COMMIT, so the chunk must be locked with
+    lock_findings_for_delete first: deduplication locks an original before linking to it,
+    so once the chunk is locked no new reference into it can be committed until the
+    delete has.
 
     Only findings outside ``delete_scope_ids`` are touched: a reference from one doomed
     finding to another goes away with the row that holds it.
@@ -1141,6 +1263,21 @@ def _bulk_delete_findings_internal(finding_qs, chunk_size=1000, *, order_desc=Fa
     caller covers every entry point to the chunked delete, not just the one that first
     hit the constraint.
 
+    Clearing inside the chunk's transaction is not enough on its own: a concurrent
+    writer that commits a child or through row (a found_by row from an import, a
+    duplicate link from a dedup flush) after the clear and before the chunk's COMMIT
+    still leaves a reference the COMMIT rejects. So the first statement of each chunk
+    row-locks the chunk's findings FOR UPDATE (lock_findings_for_delete), before any
+    child, through or tag row is touched. Every row referencing a finding is checked
+    against it with FOR KEY SHARE on the dojo_finding row -- by Postgres when it checks
+    the deferred foreign key at the writer's COMMIT, or explicitly by the dedup flush --
+    and that conflicts with FOR UPDATE. A writer that committed before the lock is seen
+    by the clear that follows it; one that has not yet committed queues behind the
+    chunk and then finds the finding gone. Any writer of a row referencing a finding
+    can therefore serialize against this delete by taking FOR KEY SHARE on the
+    dojo_finding row in the same transaction as its insert; taking it before its other
+    row locks also keeps it from ever holding a row the chunk still has to take.
+
     When order_desc is True, findings are processed highest id first (matches
     finding_delete: duplicate_cluster.order_by("-id").delete()) so self-FK
     duplicate chains delete children before parents.
@@ -1168,9 +1305,12 @@ def _bulk_delete_findings_internal(finding_qs, chunk_size=1000, *, order_desc=Fa
         for attempt in range(BULK_DELETE_MAX_CONFLICT_RETRIES + 1):
             try:
                 with transaction.atomic():
+                    # First statement of the chunk: see the docstring for why the lock has to
+                    # come before any child or through row is cleared.
+                    lock_findings_for_delete(chunk_ids)
                     bulk_clear_finding_m2m(chunk_qs)
-                    resolve_inbound_duplicate_references(chunk_ids, delete_scope_ids)
                     cascade_delete_related_objects(Finding, chunk_qs, skip_relations={Finding}, skip_m2m_for={Finding})
+                    resolve_inbound_duplicate_references(chunk_ids, delete_scope_ids)
                     execute_delete_sql(chunk_qs)
             except OperationalError as exc:
                 # A deadlock or serialization failure aborts and rolls the whole chunk
@@ -1730,198 +1870,3 @@ def verify_finding(
     )
 
     _save_finding_with_jira_sync(finding, new_note=new_note)
-
-
-def reset_finding_duplicate_status_internal(user, duplicate_id):
-    duplicate = get_object_or_404(Finding, id=duplicate_id)
-
-    if not duplicate.duplicate:
-        return None
-
-    logger.debug("resetting duplicate status of %i", duplicate.id)
-    duplicate.duplicate = False
-    duplicate.active = True
-    if duplicate.duplicate_finding:
-        # duplicate.duplicate_finding.original_finding.remove(duplicate)  # shouldn't be needed
-        duplicate.duplicate_finding = None
-    duplicate.last_reviewed = timezone.now()
-    duplicate.last_reviewed_by = user
-    duplicate.save(dedupe_option=False)
-
-    return duplicate.id
-
-
-def set_finding_as_original_internal(user, finding_id, new_original_id):
-    finding = get_object_or_404(Finding, id=finding_id)
-    new_original = get_object_or_404(
-        Finding.objects.filter(test__engagement__product=finding.test.engagement.product),
-        id=new_original_id,
-    )
-
-    if finding.test.engagement != new_original.test.engagement:
-        if (finding.test.engagement.deduplication_on_engagement
-                or new_original.test.engagement.deduplication_on_engagement):
-            return False
-
-    if finding.duplicate or finding.original_finding.all():
-        # existing cluster, so update all cluster members
-
-        if finding.duplicate and finding.duplicate_finding:
-            logger.debug(
-                "setting old original %i as duplicate of %i",
-                finding.duplicate_finding.id,
-                new_original.id,
-            )
-            finding.duplicate_finding.duplicate_finding = new_original
-            finding.duplicate_finding.duplicate = True
-            finding.duplicate_finding.save(dedupe_option=False)
-
-        for cluster_member in finding.duplicate_finding_set():
-            if cluster_member != new_original:
-                logger.debug(
-                    "setting new original for %i to %i",
-                    cluster_member.id,
-                    new_original.id,
-                )
-                cluster_member.duplicate_finding = new_original
-                cluster_member.save(dedupe_option=False)
-
-        logger.debug(
-            "setting new original for old root %i to %i", finding.id, new_original.id,
-        )
-        finding.duplicate = True
-        finding.duplicate_finding = new_original
-        finding.save(dedupe_option=False)
-
-    else:
-        # creating a new cluster, so mark finding as duplicate
-        logger.debug("marking %i as duplicate of %i", finding.id, new_original.id)
-        finding.duplicate = True
-        finding.active = False
-        finding.duplicate_finding = new_original
-        finding.last_reviewed = timezone.now()
-        finding.last_reviewed_by = user
-        finding.save(dedupe_option=False)
-
-    logger.debug("marking new original %i as not duplicate", new_original.id)
-    new_original.duplicate = False
-    new_original.duplicate_finding = None
-    new_original.save(dedupe_option=False)
-
-    return True
-
-
-# precalculate because we need related_actions to be set
-def duplicate_cluster(finding):
-    cluster = finding.duplicate_finding_set()
-
-    cluster = prefetch_for_findings(cluster)
-
-    # populate actions for findings in duplicate cluster
-    for duplicate_member in cluster:
-        duplicate_member.related_actions = (
-            calculate_possible_related_actions_for_similar_finding(
-                finding, duplicate_member,
-            )
-        )
-
-    return cluster
-
-
-# django doesn't allow much logic or even method calls with parameters in templates.
-# so we have to use a function in this view to calculate the possible actions on a similar (or duplicate) finding.
-# and we assign this dictionary to the finding so it can be accessed in the template.
-# these actions are always calculated in the context of the finding the user is viewing
-# because this determines which actions are possible
-def calculate_possible_related_actions_for_similar_finding(
-    finding, similar_finding,
-):
-    actions = []
-    if similar_finding.test.engagement != finding.test.engagement and (
-        similar_finding.test.engagement.deduplication_on_engagement
-        or finding.test.engagement.deduplication_on_engagement
-    ):
-        actions.append(
-            {
-                "action": "None",
-                "reason": ("This finding is in a different engagement and deduplication_inside_engagment "
-                           "is enabled here or in that finding"),
-            },
-        )
-    elif finding.duplicate_finding == similar_finding:
-        actions.append(
-            {
-                "action": "None",
-                "reason": ("This finding is the root of the cluster, use an action on another row, "
-                           "or the finding on top of the page to change the root of the cluser"),
-            },
-        )
-    elif similar_finding.original_finding.all():
-        actions.append(
-            {
-                "action": "None",
-                "reason": ("This finding is similar, but is already an original in a different cluster. "
-                           "Remove it from that cluster before you connect it to this cluster."),
-            },
-        )
-    elif similar_finding.duplicate_finding:
-        # reset duplicate status is always possible
-        actions.append(
-            {
-                "action": "reset_finding_duplicate_status",
-                "reason": ("This will remove the finding from the cluster, "
-                           "effectively marking it no longer as duplicate. "
-                           "Will not trigger deduplication logic after saving."),
-            },
-        )
-
-        if similar_finding.duplicate_finding in {finding, finding.duplicate_finding}:
-            # duplicate inside the same cluster
-            actions.append(
-                {
-                    "action": "set_finding_as_original",
-                    "reason": ("Sets this finding as the Original for the whole cluster. "
-                               "The existing Original will be downgraded to become a member of the cluster and, "
-                               "together with the other members, will be marked as duplicate of the new Original."),
-                },
-            )
-        else:
-            # duplicate inside different cluster
-            actions.append(
-                {
-                    "action": "mark_finding_duplicate",
-                    "reason": ("Will mark this finding as duplicate of the root finding in this cluster, "
-                               "effectively adding it to the cluster and removing it from the other cluster."),
-                },
-            )
-    # similar is not a duplicate yet
-    elif finding.duplicate or finding.original_finding.all():
-        actions.extend((
-            {
-                "action": "mark_finding_duplicate",
-                "reason": "Will mark this finding as duplicate of the root finding in this cluster",
-            }, {
-                "action": "set_finding_as_original",
-                "reason": (
-                    "Sets this finding as the Original for the whole cluster. "
-                    "The existing Original will be downgraded to become a member of the cluster and, "
-                    "together with the other members, will be marked as duplicate of the new Original."
-                ),
-            },
-        ))
-    else:
-        # similar_finding is not an original/root of a cluster as per earlier if clause
-        actions.extend((
-            {
-                "action": "mark_finding_duplicate",
-                "reason": "Will mark this finding as duplicate of the finding on this page.",
-            }, {
-                "action": "set_finding_as_original",
-                "reason": (
-                    "Sets this finding as the Original marking the finding "
-                    "on this page as duplicate of this original."
-                ),
-            },
-        ))
-
-    return actions

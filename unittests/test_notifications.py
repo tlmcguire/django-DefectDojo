@@ -6,9 +6,11 @@ from unittest.mock import Mock, patch
 import pghistory
 from auditlog.context import set_actor
 from crum import impersonate
+from django.db.utils import DataError
 from django.test import RequestFactory, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from parameterized import parameterized
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient, APITestCase
 
@@ -274,13 +276,10 @@ class TestNotifications(DojoTestCase):
                 self.assertIn("&lt;a href=", message)
 
 
-@skip("Legacy authorization changes the recipient-filtering count: under "
-      "RBAC, get_authorized_users_for_product_and_product_type expanded "
-      "permission via per-product / product_type Role rows, group expansion, "
-      "and Global_Role; under legacy that helper gates only on the caller's "
-      "is_staff/is_superuser status (the listed users' role rows are inert). "
-      "These hardcoded call_count == 6 assertions need re-baselining with a "
-      "fresh count on the new contract.")
+@skip("The hardcoded call counts and label texts in these assertions predate two changes: "
+      "notification recipients now follow product membership rather than the caller's "
+      "is_staff/is_superuser status, and the V3 relabel renamed products and product types "
+      "in the descriptions and URLs. They need re-baselining against the current behavior.")
 @versioned_fixtures
 class TestNotificationTriggers(DojoTestCase):
     fixtures = ["dojo_testdata.json"]
@@ -1373,6 +1372,57 @@ class TestNotificationWebhooks(DojoTestCase):
 
 
 @versioned_fixtures
+class TestNotificationRecipientScoping(DojoTestCase):
+
+    """Product notifications reach the users authorized on the product, whoever triggered them."""
+
+    fixtures = ["dojo_testdata.json"]
+
+    def setUp(self):
+        self.product = Product.objects.get(id=1)
+        self.admin = Dojo_User.objects.get(username="admin")
+        self.member = Dojo_User.objects.create(username="scoping_member", is_active=True)
+        self.product.authorized_users.add(self.member)
+        self.outsider = Dojo_User.objects.create(username="scoping_outsider", is_active=True)
+        for user in (self.member, self.outsider):
+            notifications, _ = Notifications.objects.get_or_create(user=user, product=None)
+            notifications.other = ["alert"]
+            notifications.save()
+
+    def _notify(self, actor, title):
+        with impersonate(actor):
+            create_notification(event="other", title=title, product=self.product, url="/product/1")
+
+    def _alerted(self, user, title):
+        return Alerts.objects.filter(user_id=user, title=title).exists()
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_superuser_action_reaches_members_only(self):
+        self._notify(self.admin, "scoping superuser")
+        self.assertTrue(self._alerted(self.member, "scoping superuser"))
+        self.assertFalse(self._alerted(self.outsider, "scoping superuser"))
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_member_action_reaches_members_only(self):
+        self._notify(self.member, "scoping member")
+        self.assertTrue(self._alerted(self.member, "scoping member"))
+        self.assertFalse(self._alerted(self.outsider, "scoping member"))
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_notification_without_an_actor_still_reaches_members(self):
+        self._notify(None, "scoping no actor")
+        self.assertTrue(self._alerted(self.member, "scoping no actor"))
+        self.assertFalse(self._alerted(self.outsider, "scoping no actor"))
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
+    def test_recipients_accept_user_instances(self):
+        with impersonate(self.admin):
+            create_notification(event="other", title="direct recipient", recipients=[self.outsider], url="/x")
+        self.assertTrue(self._alerted(self.outsider, "direct recipient"))
+        self.assertFalse(self._alerted(self.member, "direct recipient"))
+
+
+@versioned_fixtures
 class TestProcessTagNotifications(DojoTestCase):
 
     """
@@ -1431,6 +1481,34 @@ class TestProcessTagNotifications(DojoTestCase):
             1,
             "a username containing '.' must be matched in full, not truncated to 'jane'",
         )
+
+    def _mention_on(self, author, entry, parent):
+        note = Notes.objects.create(entry=entry, author=author)
+        request = RequestFactory().get("/")
+        request.user = author
+        with impersonate(author):
+            process_tag_notifications(request, note, parent_url="/finding/2", parent_title="Finding: Example", parent=parent)
+
+    def test_mention_reaches_a_user_who_can_see_the_parent(self):
+        author = Dojo_User.objects.get(username="admin")
+        finding = Finding.objects.get(id=2)
+        mentioned = Dojo_User.objects.create(username="mention_member", is_active=True)
+        finding.test.engagement.product.authorized_users.add(mentioned)
+        self._enable_mention_alerts(mentioned)
+
+        self._mention_on(author, "@mention_member please look", finding)
+
+        self.assertEqual(1, Alerts.objects.filter(user_id=mentioned, source="User Mentioned").count())
+
+    def test_mention_skips_a_user_who_cannot_see_the_parent(self):
+        author = Dojo_User.objects.get(username="admin")
+        finding = Finding.objects.get(id=2)
+        mentioned = Dojo_User.objects.create(username="mention_outsider", is_active=True)
+        self._enable_mention_alerts(mentioned)
+
+        self._mention_on(author, "@mention_outsider please look", finding)
+
+        self.assertFalse(Alerts.objects.filter(user_id=mentioned).exists())
 
     def test_email_address_in_prose_is_not_a_mention(self):
         author = Dojo_User.objects.get(username="admin")
@@ -1506,3 +1584,81 @@ class TestReviewRequestedWebhookTemplate(DojoTestCase):
         )
         self.assertNotEqual(rendered.strip(), fallback.strip())
         self.assertNotIn("finding:", fallback)
+
+
+@versioned_fixtures
+class TestAlertNotificationResilience(DojoTestCase):
+
+    """
+    Regression: a failure to persist an in-app Alert (e.g. the ``dojo_alerts``
+    primary-key sequence reaching the PostgreSQL int4 maximum, 2147483647) must
+    not propagate out of the notification helper. Alert creation is a side
+    effect of operations like scan import, and ``send_alert_notification``
+    already guards its own ``alert.save()`` -- but its fallback ``_log_alert``
+    saved another Alert without a guard, so the same underlying DB failure
+    re-raised there and aborted the caller (customer-reported: reimport-scan
+    failing wholesale because the alert could not be written).
+    """
+
+    fixtures = ["dojo_testdata.json"]
+
+    SEQUENCE_EXHAUSTED_MESSAGE = (
+        'nextval: reached maximum value of sequence "dojo_alerts_id_seq" (2147483647)'
+    )
+
+    def _failing_save(self, *_args, **_kwargs):
+        raise DataError(self.SEQUENCE_EXHAUSTED_MESSAGE)
+
+    @parameterized.expand([
+        (True,),
+        (False,),
+    ])
+    def test_alert_persistence_failure_does_not_propagate(self, save_fails):
+        """
+        ``send_alert_notification`` must return normally whether the underlying
+        Alert save succeeds or fails; a persistence failure is swallowed and
+        logged, never raised to the caller (which would break scan import).
+        """
+        admin = Dojo_User.objects.get(username="admin")
+        manager = AlertNotificationManger()
+
+        if save_fails:
+            with patch.object(Alerts, "save", side_effect=self._failing_save):
+                # Must NOT raise, even though both the primary alert save and the
+                # ``_log_alert`` fallback save hit the same DB failure.
+                manager.send_alert_notification(
+                    "scan_added",
+                    user=admin,
+                    title="Regression alert persistence failure",
+                    url=reverse("alerts"),
+                )
+        else:
+            before = Alerts.objects.count()
+            manager.send_alert_notification(
+                "scan_added",
+                user=admin,
+                title="Regression alert persistence success",
+                url=reverse("alerts"),
+            )
+            after = Alerts.objects.count()
+            self.assertEqual(
+                after, before + 1,
+                msg=f"expected one Alert persisted, before={before} after={after}",
+            )
+
+    def test_log_alert_fallback_does_not_propagate_db_failure(self):
+        """
+        ``_log_alert`` is the last-resort error logger for every notification
+        channel. If persisting its own Alert fails, it must log and return, not
+        raise -- otherwise an infrastructure-level DB failure defeats the
+        per-channel error isolation of the whole notification pipeline.
+        """
+        manager = AlertNotificationManger()
+        with patch.object(Alerts, "save", side_effect=self._failing_save):
+            manager._log_alert(
+                DataError(self.SEQUENCE_EXHAUSTED_MESSAGE),
+                "Alert Notification",
+                title="Regression log_alert failure",
+                description=self.SEQUENCE_EXHAUSTED_MESSAGE,
+                url=reverse("alerts"),
+            )

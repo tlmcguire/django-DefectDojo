@@ -15,15 +15,25 @@ The tests cover the deployment on the lastest [kubernetes version](https://kuber
 
 ## Helm chart
 
-Starting with version 1.14.0, a helm chart will be pushed onto the `helm-charts` branch during the release process. Don't look for a chart museum, we're leveraging the "raw" capabilities of GitHub at this time.
+Starting with version 1.14.0, a helm chart is published to the `helm-charts` branch during the release process.
 
 To use it, you can add our repo.
 
 ```
-$ helm repo add defectdojo 'https://raw.githubusercontent.com/DefectDojo/django-DefectDojo/helm-charts'
+$ helm repo add defectdojo 'https://charts.defectdojo.com'
 
 $ helm repo update
 ```
+
+`charts.defectdojo.com` is run by DefectDojo, Inc. It serves the chart index and sends chart downloads on to GitHub,
+where the charts are published. Each request is logged: time, chart and version, Helm client and IP address. The
+address is used to identify the organization or network, then deleted within three days. The rest of the record is
+kept for up to 13 months. We use these logs to see which organizations download DefectDojo, and we may reach out to
+them about our products or to ask for feedback.
+Prefer to use GitHub directly? Add the repo from `https://raw.githubusercontent.com/DefectDojo/django-DefectDojo/helm-charts`
+instead (repos already added that way keep working).
+To opt out of contact or have your data removed, email compliance@defectdojo.com.
+Details: [privacy policy, section 1.4](https://defectdojo.com/privacy-policy)
 
 You should now be able to see the chart.
 
@@ -152,7 +162,7 @@ If you have stored your images in a private registry, you can install defectdojo
 - Then install the chart with the same commands as before but adding:
 
 ```zsh
-  --set repositoryPrefix=<myregistry.com/path> \
+  --set global.imageRegistry=<myregistry.com/path> \
   --set imagePullSecrets=defectdojoregistrykey
 ```
 
@@ -511,7 +521,7 @@ The HELM schema will be generated for you.
 
 # General information about chart values
 
-![Version: 1.9.48](https://img.shields.io/badge/Version-1.9.48-informational?style=flat-square) ![AppVersion: 3.2.300](https://img.shields.io/badge/AppVersion-3.2.300-informational?style=flat-square)
+![Version: 1.9.67](https://img.shields.io/badge/Version-1.9.67-informational?style=flat-square) ![AppVersion: 3.5.101](https://img.shields.io/badge/AppVersion-3.5.101-informational?style=flat-square)
 
 A Helm chart for Kubernetes to install DefectDojo
 
@@ -525,7 +535,7 @@ A Helm chart for Kubernetes to install DefectDojo
 
 | Repository | Name | Version |
 |------------|------|---------|
-| oci://registry-1.docker.io/cloudpirates | valkey | 0.24.6 |
+| oci://registry-1.docker.io/cloudpirates | valkey | 0.25.13 |
 | oci://us-docker.pkg.dev/os-public-container-registry/defectdojo | postgresql | 16.7.27 |
 
 ## Values
@@ -589,13 +599,13 @@ A Helm chart for Kubernetes to install DefectDojo
 | celery.worker.startupProbe | object | `{}` | Enable startup probe for Celery worker container. |
 | celery.worker.terminationGracePeriodSeconds | int | `300` |  |
 | celery.worker.tolerations | list | `[]` |  |
-| cloudsql | object | `{"containerSecurityContext":{},"enable_iam_login":false,"enabled":false,"extraEnv":[],"extraVolumeMounts":[],"image":{"pullPolicy":"IfNotPresent","repository":"gcr.io/cloudsql-docker/gce-proxy","tag":"1.38.2"},"instance":"","resources":{},"use_private_ip":false,"verbose":true}` | Google CloudSQL support in GKE via gce-proxy |
+| cloudsql | object | `{"containerSecurityContext":{},"enable_iam_login":false,"enabled":false,"extraEnv":[],"extraVolumeMounts":[],"image":{"pullPolicy":"IfNotPresent","repository":"gcr.io/cloudsql-docker/gce-proxy","tag":"1.38.3"},"instance":"","resources":{},"use_private_ip":false,"verbose":true}` | Google CloudSQL support in GKE via gce-proxy |
 | cloudsql.containerSecurityContext | object | `{}` | Optional: security context for the CloudSQL proxy container. |
 | cloudsql.enable_iam_login | bool | `false` | use IAM database authentication |
 | cloudsql.enabled | bool | `false` | To use CloudSQL in GKE set 'enable: true' |
 | cloudsql.extraEnv | list | `[]` | Additional environment variables for the CloudSQL proxy container. |
 | cloudsql.extraVolumeMounts | list | `[]` | Array of additional volume mount points for the CloudSQL proxy container |
-| cloudsql.image | object | `{"pullPolicy":"IfNotPresent","repository":"gcr.io/cloudsql-docker/gce-proxy","tag":"1.38.2"}` | set repo and image tag of gce-proxy |
+| cloudsql.image | object | `{"pullPolicy":"IfNotPresent","repository":"gcr.io/cloudsql-docker/gce-proxy","tag":"1.38.3"}` | set repo and image tag of gce-proxy |
 | cloudsql.instance | string | `""` | set CloudSQL instance: 'project:zone:instancename' |
 | cloudsql.resources | object | `{}` | Optional: add resource requests/limits for the CloudSQL proxy container. |
 | cloudsql.use_private_ip | bool | `false` | whether to use a private IP to connect to the database |
@@ -732,7 +742,7 @@ A Helm chart for Kubernetes to install DefectDojo
 | monitoring.prometheus.image.digest | string | `""` |  |
 | monitoring.prometheus.image.registry | string | `""` |  |
 | monitoring.prometheus.image.repository | string | `"nginx/nginx-prometheus-exporter"` |  |
-| monitoring.prometheus.image.tag | string | `"1.5.1"` |  |
+| monitoring.prometheus.image.tag | string | `"1.5.3"` |  |
 | monitoring.prometheus.imagePullPolicy | string | `"IfNotPresent"` |  |
 | monitoring.prometheus.resources | object | `{}` | Optional: add resource requests/limits for the nginx prometheus exporter container |
 | networkPolicy | object | `{"annotations":{},"egress":[],"enabled":false,"ingress":[],"ingressExtend":[]}` | Enables application network policy For more info follow https://kubernetes.io/docs/concepts/services-networking/network-policies/ |

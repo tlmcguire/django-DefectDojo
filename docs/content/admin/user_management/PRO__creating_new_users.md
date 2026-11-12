@@ -5,14 +5,14 @@ audience: pro
 weight: 1
 ---
 
-This page describes the recommended onboarding workflow for adding new users to a DefectDojo instance.  DefectDojo users can be used as both standard, human-operated accounts and as service accounts.
+This page describes the recommended onboarding workflow for adding new users to a DefectDojo instance.  For automation (pipelines, scanners), use a [service user](../pro__service_users/) instead: it needs no email address or password and its API token is shown when it is created.
 
 The admin who creates the account is responsible for delivering the initial credentials (username and password) to the new user.
 
 ## Recommended workflow
 
 1. **Create the user account** in DefectDojo (Superuser only):
-   * Navigate to **👤 Users → ➕ New User**.
+   * Open **Settings > Users & Permissions > Users** and select **New User**.
    * Enter the new user's name and email address.
    * Set a temporary password.
    * Submit the form.
@@ -37,6 +37,6 @@ If your instance is configured with [SSO](../configure_sso/), the workflow is di
 
 ## Recovering from a lost MFA token
 
-If a user loses access to their MFA device, they can log in with one of the recovery codes issued when they enrolled. If those are gone too, an administrator with server access can clear MFA from the account with `python manage.py remove_mfa --username <username>`, after which the user logs in with their password and enrolls again — their permissions and history are preserved, so there is no need to create a replacement account.
+If a user loses access to their MFA device, they can log in with one of the recovery codes issued when they enrolled. If those are gone too, a Superuser can clear MFA from the account with **Reset MFA** in the user's action menu (or, with server access, `python manage.py remove_mfa --username <username>`), after which the user logs in with their password and enrolls again — their permissions and history are preserved, so there is no need to create a replacement account.
 
 See [Multi-Factor Authentication](../pro__mfa/#recovering-a-user-who-has-lost-their-mfa-device) for the full recovery options, and note that access to the **Cloud Manager** itself is a separate matter — see the [connectivity troubleshooting guide](/get_started/pro/cloud/connectivity-troubleshooting/#ive-lost-access-to-my-mfa-codes).

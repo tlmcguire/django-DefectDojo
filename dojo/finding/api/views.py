@@ -1,7 +1,7 @@
 import base64
 import logging
 
-import tagulous
+import django_tagulous as tagulous
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
@@ -41,6 +41,7 @@ from dojo.api_v2.views import (
 )
 from dojo.authorization import api_permissions as permissions
 from dojo.db_utils import is_foreign_key_conflict
+from dojo.filters import order_with_pk_tiebreak
 from dojo.finding.api.filters import ApiFindingFilter, ApiTemplateFindingFilter
 from dojo.finding.api.serializer import (
     BurpRawRequestResponseMultiSerializer,
@@ -56,6 +57,11 @@ from dojo.finding.api.serializer import (
     FindingVerifySerializer,
 )
 from dojo.finding.queries import get_authorized_findings
+from dojo.finding.ui.views import (
+    duplicate_cluster,
+    reset_finding_duplicate_status_internal,
+    set_finding_as_original_with_reason,
+)
 from dojo.jira import services as jira_services
 from dojo.location.feature import locations_enabled
 from dojo.models import (
@@ -223,6 +229,8 @@ class FindingViewSet(
                 "test__environment",
                 "test__engagement__product",
                 "test__engagement__product__prod_type",
+                # cwes is serialized on every row; unprefetched it costs a query per finding
+                "finding_cwe_set",
             )
         else:
             # TODO: Delete this after the move to Locations
@@ -247,15 +255,22 @@ class FindingViewSet(
                 "test__environment",
                 "test__engagement__product",
                 "test__engagement__product__prod_type",
+                # cwes is serialized on every row; unprefetched it costs a query per finding
+                "finding_cwe_set",
             )
 
         # No blanket .distinct(): get_authorized_findings filters by a scalar product-id IN (no row
         # multiplication), the prefetches above don't join, and ApiFindingFilter rewrites its to-many
         # value filters (endpoints/found_by/reviewers/finding_group/risk_acceptance) as Exists() while
-        # ordering by to-many fields aggregates via MultivaluedOrderingFilter. Tag filters still apply
-        # DojoFilter.qs's tag-conditional distinct. A query-wide DISTINCT over the full wide-row finding
+        # ordering by to-many fields aggregates via MultivaluedOrderingFilter. The tag filters are
+        # Exists()-based as well (TagNameFilter and friends). A query-wide DISTINCT over the full wide-row finding
         # result set forces an expensive sort/hash-aggregate on every list request, so it's dropped.
         return findings
+
+    def filter_queryset(self, queryset):
+        # The list is paged by a plain ORDER BY ... LIMIT now that tag filters add no DISTINCT: end
+        # every ordering (an empty o= included) on the pk so pages never repeat or skip a finding.
+        return order_with_pk_tiebreak(super().filter_queryset(queryset))
 
     def get_serializer_class(self):
         if self.request and self.request.method == "POST":
@@ -470,6 +485,7 @@ class FindingViewSet(
                     reverse("view_finding", args=(finding.id,)),
                 ),
                 parent_title=f"Finding: {finding.title}",
+                parent=finding,
             )
 
             if finding.has_jira_issue:
@@ -652,7 +668,7 @@ class FindingViewSet(
     )
     def get_duplicate_cluster(self, request, pk):
         finding = self.get_object()
-        result = finding_helper.duplicate_cluster(finding)
+        result = duplicate_cluster(request, finding)
         serializer = FindingSerializer(
             instance=result, many=True, context={"request": request},
         )
@@ -665,7 +681,7 @@ class FindingViewSet(
     @action(detail=True, methods=["post"], url_path=r"duplicate/reset", permission_classes=(IsAuthenticated, permissions.UserHasFindingRelatedObjectPermission))
     def reset_finding_duplicate_status(self, request, pk):
         self.get_object()
-        checked_duplicate_id = finding_helper.reset_finding_duplicate_status_internal(
+        checked_duplicate_id = reset_finding_duplicate_status_internal(
             request.user, pk,
         )
         if checked_duplicate_id is None:
@@ -679,16 +695,16 @@ class FindingViewSet(
                 "new_fid", OpenApiTypes.INT, OpenApiParameter.PATH,
             ),
         ],
-        responses={status.HTTP_204_NO_CONTENT: ""},
+        responses={status.HTTP_204_NO_CONTENT: "", status.HTTP_400_BAD_REQUEST: OpenApiTypes.OBJECT},
     )
     @action(
         detail=True, methods=["post"], url_path=r"original/(?P<new_fid>\d+)", permission_classes=(IsAuthenticated, permissions.UserHasFindingRelatedObjectPermission),
     )
     def set_finding_as_original(self, request, pk, new_fid):
         self.get_object()
-        success = finding_helper.set_finding_as_original_internal(request.user, pk, new_fid)
-        if not success:
-            return Response(status=status.HTTP_400_BAD_REQUEST)
+        refusal = set_finding_as_original_with_reason(request.user, pk, new_fid)
+        if refusal:
+            return Response({"detail": refusal}, status=status.HTTP_400_BAD_REQUEST)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @extend_schema(
@@ -744,17 +760,23 @@ class FindingViewSet(
                 "Metadata name is required", status=status.HTTP_400_BAD_REQUEST,
             )
 
+        metadata_data = FindingMetaSerializer(data=request.data)
+        if not metadata_data.is_valid():
+            return Response(
+                metadata_data.errors, status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
             DojoMeta.objects.update_or_create(
                 name=metadata_name,
                 finding=finding,
                 defaults={
-                    "name": request.data.get("name"),
-                    "value": request.data.get("value"),
+                    "name": metadata_data.validated_data["name"],
+                    "value": metadata_data.validated_data["value"],
                 },
             )
 
-            return Response(data=request.data, status=status.HTTP_200_OK)
+            return Response(data=metadata_data.data, status=status.HTTP_200_OK)
         except IntegrityError:
             return Response(
                 "Update failed because the new name already exists",
