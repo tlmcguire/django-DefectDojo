@@ -8,6 +8,7 @@ DefectDojo ships no coverage tooling, so this directory adds the minimum needed 
 | `run-coverage.sh <label>` | Runs the unit suite under coverage in the same three phases as `docker/entrypoint-unit-tests.sh` (parallel, `non-parallel`, `transactional`; `performance` excluded) and writes `<label>/report.txt` |
 | `baseline/report.txt` | Per-file report **before** any A7 change |
 | `after/report.txt` | Per-file report after the A7 tests, fix and refactor |
+| `post-merge-unit/report.txt` | Current coverage after merging upstream, run in the unit-test Docker environment |
 
 ```bash
 # with a migrated PostgreSQL test database and the DD_* variables from docker-compose.override.unit_tests.yml
@@ -63,3 +64,17 @@ The refactor removed two statements, which is why the line total went from 66,90
 **What ran:** 5,435 tests (5,383 + 45 + 7), 537 skipped by the suite. One test failed, `test_add_jira_instance_unknown_host`, the same DNS-dependent test that fails at baseline. The two order-dependent failures from the baseline run did not recur.
 
 **What this does and does not say.** The project went up 0.1 percentage points because 86 tests aimed at three components cannot move a 66,907-statement codebase much; the per-file rows are the honest measure. The one line left uncovered in `auto_create_context.py` is the re-check for an engagement created by a concurrent request (`return existing`), which cannot be reached without two racing threads. A higher number would not mean the tests are good: after writing them I checked that by breaking the production code eight different ways and confirming the new tests failed each time. That check is small and manual, not a mutation-testing tool.
+
+## Post-merge verification (November 11, 2026)
+
+The upstream sync changed both application code and the test suite. The original A7 before/after figures above remain a comparison on the original revision; they must not be compared as if they were a before/after pair with this run.
+
+The three A7 characterization modules were updated for upstream's case-insensitive severity normalization and its revised product-type conflict message. All 86 tests in those modules passed. The full three-phase suite ran in the `unit_tests` Docker configuration with coverage.py 7.17.2 and Python 3.14.8: 8,718 tests in phase 1, 45 in phase 2, and 7 in phase 3. All three phases passed; 554 tests were skipped by the suite.
+
+| Measure | Covered / total | Percent |
+|---|---:|---:|
+| Lines | 69,800 / 84,878 | 82.2% |
+| Branches | 20,463 / 29,698 | 68.9% |
+| **Combined (reported total)** | **90,263 / 114,576** | **78.8%** |
+
+This is an execution measure, not proof that every covered path has a useful assertion. The full per-file output is in `post-merge-unit/report.txt`.

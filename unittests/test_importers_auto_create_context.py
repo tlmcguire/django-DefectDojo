@@ -141,11 +141,11 @@ class TestFetchers(AutoCreateContextTestBase):
         self.assertIsNone(self.manager.get_target_product_if_exists(product_name="Nope"))
         self.assertIsNone(self.manager.get_target_product_if_exists())
 
-    def test_getTargetProductIfExists_whenProductTypeNameConflicts_raisesValueErrorNamingBoth(self):
+    def test_getTargetProductIfExists_whenProductTypeNameConflicts_raisesValueErrorNamingSuppliedType(self):
         with self.assertRaises(ValueError) as caught:
             self.manager.get_target_product_if_exists(product_name="Existing Product", product_type_name="Different Type")
-        self.assertIn("Existing Type", str(caught.exception))
         self.assertIn("Different Type", str(caught.exception))
+        self.assertNotIn("Existing Type", str(caught.exception))
 
     def test_getTargetProductIfExists_whenProductIsUnknown_ignoresTheProductTypeName(self):
         self.assertIsNone(self.manager.get_target_product_if_exists(product_name="Nope", product_type_name="Different Type"))

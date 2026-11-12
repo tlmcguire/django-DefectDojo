@@ -78,11 +78,12 @@ class TestSanitizeSeverity(DojoTestCase):
         self.assertIn('Finding severity "Severe" is not supported', message)
         self.assertIn("Any of the following are supported", message)
 
-    def test_sanitizeSeverity_whenCaseDiffersOnANonInfoSeverity_isRejected(self):
-        # Only the Info family is case-insensitive. "critical" is not folded to "Critical".
-        for raw in ["critical", "HIGH", "medium", "low"]:
-            with self.subTest(raw=raw), self.assertRaises(ValidationError):
-                self.sanitize(raw)
+    def test_sanitizeSeverity_whenCaseDiffersOnANonInfoSeverity_normalizesIt(self):
+        for raw, expected in [("critical", "Critical"), ("HIGH", "High"), ("medium", "Medium"), ("low", "Low")]:
+            with self.subTest(raw=raw):
+                finding = self.sanitize(raw)
+                self.assertEqual(expected, finding.severity)
+                self.assertEqual(Finding.get_numerical_severity(expected), finding.numerical_severity)
 
     def test_sanitizeSeverity_whenSeverityIsEmpty_raisesValidationError(self):
         with self.assertRaises(ValidationError):
