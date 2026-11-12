@@ -15,15 +15,32 @@ DefectDojo Pro includes enhanced Risk Acceptance capabilities to scale risk mana
 
 ### Accessing Risk Accepted Findings
 
-The sidebar features a section for Risk Acceptances that includes three subsections in its dropdown menu: 
-- **Risk Accepted Findings**
-    - This section includes a table of all Findings that have been risk accepted, whether through as a part of a Full Risk Acceptance object or using the Simple Risk Acceptance workflow. 
-- **All Risk Acceptances**
-    - This section includes a table of all Full Risk Acceptance objects, arranged in chronological order.
-- **New Risk Acceptance**
-    - Clicking this option in the sidebar will start the workflow to create a Full Risk Acceptance object.  
+Risk Acceptances have their own entry in the sidebar, and risk-accepted Findings have their own Findings list: 
+- **Act > Explore > Findings > Risk Accepted**
+    - This page includes a table of all Findings that have been risk accepted, whether through as a part of a Full Risk Acceptance object or using the Simple Risk Acceptance workflow. 
+- **Act > Risk Acceptances**
+    - This page includes a table of all Full Risk Acceptance objects, arranged in chronological order.
+    - Clicking **New Risk Acceptance** on this page will start the workflow to create a Full Risk Acceptance object.  
 
 ![Risk acceptance sidebar](images/RA_image1.png)
+
+### Finding Risk Acceptances by host
+
+The **All Risk Acceptances** table includes a **Host** column listing the hosts covered by each
+Risk Acceptance's accepted Findings, and that column's filter narrows the table to the Risk
+Acceptances covering a given host. The filter matches on part of a host, so filtering on
+`example.com` returns every Risk Acceptance covering a subdomain of it.
+
+This answers the question that comes up when a host is being decommissioned, handed to another
+team, or reviewed in an audit: what has already been accepted here, and by whom. A Risk Acceptance
+covering several Findings on the same host lists that host once, and one covering Findings on
+several hosts lists each of them.
+
+The same filter is available on the API as `finding_host`:
+
+```
+GET /api/v2/risk_acceptance/?finding_host=api.example.com
+```
 
 ## Creating Risk Acceptances
 
@@ -52,40 +69,62 @@ Each Full Risk Acceptance adds additional context to Risk Acceptance, such as:
     - Whether the Finding’s status will return to “Active” upon expiration.
     - Whether the SLA will restart upon expiration.
 
-Expiration is unique to Full Risk Acceptance objects, and allows any Findings that have been Risk Accepted to be re-examined at an appropriate time. Once a Risk Acceptance expires, any Findings will be set to Active again. 
+Expiration is unique to Full Risk Acceptance objects, and allows any Findings that have been Risk Accepted to be re-examined at an appropriate time. When a Risk Acceptance expires, its Findings are set back to Active only if **Reactivate Findings on Expiration** is checked on it (it is by default). With that option unchecked, the Findings stay Risk Accepted after the expiration date.
 
-If you don’t specify a date, the Default Risk Acceptance / Default Risk Acceptance Expiration days will be used from the System Settings page.
+A new Risk Acceptance starts with its **Expiration Date** filled in: today plus the **Default Risk Acceptance Days** setting on the System Settings page (180 unless changed, and 180 when the field is left empty). The date sits in the main part of the form, so you can see it, change it, or clear it before submitting. A Risk Acceptance with no expiration date never expires. If the setting is 0, new Risk Acceptances start with no date.
+
+The API follows the same rule: a `POST /api/v2/risk_acceptance/` that leaves out `expiration_date` gets the default date, and one that sends `"expiration_date": null` creates a Risk Acceptance that never expires. The `accept_risks` actions (`POST /api/v2/findings/accept_risks/`, `/api/v2/engagements/{id}/accept_risks/` and `/api/v2/tests/{id}/accept_risks/`) and a security exception request (`POST /api/v2/risk_acceptance/request/`, see [Asking for an exception](#asking-for-an-exception)) do the same.
 
 #### How to Complete a Full Risk Acceptance
 
 A Full Risk Acceptance object can be made in three different ways:
-- Using the **New Risk Acceptance** button in the sidebar.
-- Using the **Add Risk Acceptance** button on an individual Finding.
-- Clicking the **Risk Acceptance Actions** button that appears after selecting a Finding/multiple Findings from within a table.
+- Using the **New Risk Acceptance** button on the **Act > Risk Acceptances** page.
+- Using **Add Risk Acceptance** in an individual Finding's gear menu.
+- Clicking the **Risk Acceptance** button that appears after selecting a Finding/multiple Findings from within a table.
 
-##### New Risk Acceptance (Sidebar)
+##### New Risk Acceptance (Risk Acceptances page)
 
-Clicking New Risk Acceptance from the sidebar will open a page in which the User can establish the data and details associated with a new Full Risk Acceptance object. The second page will allow the User to filter and select the Findings to be added to that object.
+Clicking **New Risk Acceptance** on the **Act > Risk Acceptances** page will open a page in which the User can establish the data and details associated with a new Full Risk Acceptance object. The second page will allow the User to filter and select the Findings to be added to that object.
 
 ##### Add Risk Acceptance (Individual) 
 
-Having opened an individual Finding, click the gear icon in the top right corner of the view and select **Add Risk Acceptance**. From there, you will be able to either add the Finding to an existing Full Risk Acceptance object, or create a new object. 
+Having opened an individual Finding, click the gear icon in the top right corner of the view and select **Add Risk Acceptance**. From there, choose **Add to Existing Risk Acceptance** to add the Finding to an existing Full Risk Acceptance object, or **Add to New Risk Acceptance** to create a new object. 
 
 ![Risk Acceptance in Finding Submenu](images/RA_image2.png)
 
-##### Risk Acceptance Actions (Table)
+##### Risk Acceptance (Table)
 
-Having selected a Finding/Findings from within a table, click the **Risk Acceptance Actions** button that appears at the top and select either **Add to New Risk Acceptance Object** or **Add to Existing Risk Acceptance Object** and fill out the required fields. 
+Having selected a Finding/Findings from within a table, click the **Risk Acceptance** button that appears at the top and select either **Add to New Risk Acceptance** or **Add to Existing Risk Acceptance** and fill out the required fields. 
 
-Findings can only be added to a single Risk Acceptance at once.  If the Risk Acceptance Actions button is unclickable, it’s likely because one of the selected Findings has already been added to a Full Risk Acceptance object.
+Findings can only be added to a single Risk Acceptance at once.  If the **Risk Acceptance** button is unclickable, it’s likely because one of the selected Findings has already been added to a Full Risk Acceptance object.
 
-![Risk Acceptance Actions button](images/RA_image5.png)
+##### One Risk Acceptance per Finding
+
+A Finding belongs to one Risk Acceptance at a time. A Finding that is already Risk Accepted, through another Full Risk Acceptance or a Simple Risk Acceptance, cannot be added to a second one, and with Risk Acceptances 2.0 enabled neither can a Finding that an undecided security exception request already names. The Findings step of **New Risk Acceptance** and **Add Findings** on an existing Risk Acceptance list only Findings that are not Risk Accepted, not duplicates, and not waiting on an exception request.
+
+Approving a security exception request accepts only the Findings that nothing else holds by then. A Finding that was Risk Accepted another way while the request waited, for example by reinstating an expired Risk Acceptance that already listed it, is removed from the request and stays accepted where it is.
+
+The API applies the same rule. `POST /api/v2/risk_acceptance/`, a `PATCH` or `PUT` that adds Findings, and `POST /api/v2/risk_acceptance/request/` return `400` and name each Finding that is already held, for example:
+
+```json
+{
+    "accepted_findings": [
+        "Finding \"SQL Injection\" (1234) is already risk accepted. A finding can be in only one risk acceptance."
+    ]
+}
+```
+
+A request reports it under `findings` instead. Findings a Risk Acceptance already holds can be sent again in an update. A Finding whose Risk Acceptance has expired is no longer Risk Accepted, so it can be accepted again.
+
+Automations follow the same rule and skip a Finding that is already held rather than adding it to a second Risk Acceptance: standing acceptances (the first one that matches takes the Finding) and the Rules Engine actions that add Findings to, or create, a Risk Acceptance.
+
+![Risk Acceptance button](images/RA_image5.png)
 
 ##### Editing Full Risk Acceptances
 
 Once a Full Risk Acceptance object has been created, you can edit the details of the object, upload a file with proof of the Risk Acceptance, or delete the object entirely by clicking the gear icon in the top right of the object’s view. 
 
-Findings can also be added and removed from the object using the same menu. Alternatively, Findings can be removed from the object by clicking the ⋮ kebab menu next to an individual Finding, clicking **Bulk Update Actions**, and selecting **Unaccept Risk** from the Simple Risk Acceptance Status dropdown menu.
+Findings can also be added and removed from the object using the same menu. Alternatively, remove a single Finding with **Remove Risk Acceptance** in that Finding's gear menu. Selecting Findings in a table, clicking **Bulk Edit**, and choosing **Unaccept Risk** from the **Simple Risk Acceptance Status** dropdown also removes them from their Full Risk Acceptance, but only for Findings whose Asset has Simple Risk Acceptance enabled. Findings on other Assets are skipped, and a warning says how many.
 
 Finally, if you add any Findings to a Full Risk Acceptance object and then subsequently delete that object, the Findings within will have their status automatically reverted to “Active.”
 
@@ -101,11 +140,11 @@ Once enabled, Simple Risk Acceptance can be run from the table of Findings withi
 
 #### How to Complete a Simple Risk Acceptance
 
-You can complete the Simple Risk Acceptance workflow from either the All Findings table (accessible from the sidebar) or from the table of Findings within a specific test. The workflow is identical between the two. 
+You can complete the Simple Risk Acceptance workflow from either the All Findings table (**Act > Explore > Findings > All** in the sidebar) or from the table of Findings within a specific test. The workflow is identical between the two. 
 
-Select the Findings you wish to Risk Accept and click the **Bulk Update Actions** button that appears at the top of the table. From there, select **Accept Risk** from the Simple Risk Acceptance Status dropdown. Because the Findings have been Simple Risk Accepted, there is no associated Full Risk Acceptance object. The Findings that were Risk Accepted are accessible from the **Risk Accepted Findings** menu in the sidebar.
+Select the Findings you wish to Risk Accept and click the **Bulk Edit** button that appears at the top of the table. From there, select **Accept Risk** from the Simple Risk Acceptance Status dropdown. Because the Findings have been Simple Risk Accepted, there is no associated Full Risk Acceptance object. The Findings that were Risk Accepted are accessible from **Act > Explore > Findings > Risk Accepted** in the sidebar.
 
-![Risk Acceptance Actions in Table](images/RA_image4.png)
+![Bulk Edit in a Findings table](images/RA_image4.png)
 
 Conversely, if you wish to unaccept the risk for any Findings that had been previously Risk Accepted, select **Unaccept Risk**. If a Finding has been Simple Risk Accepted, the risk must be unaccepted prior to adding it to a Full Risk Acceptance object.
 
@@ -121,6 +160,18 @@ Risk Acceptance visibility is **gated by a distinct minimum permission from Find
 | Add or Edit a Risk Acceptance | Writer |
 
 For the complete role-permission chart that lists Risk Acceptance permissions alongside other Asset-level actions, see [Action permission charts](/admin/user_management/user_permission_chart/#role-permission-chart).
+
+### Read-only access to Risk Acceptances
+
+No built-in role can view Risk Acceptances without also being able to change them. To give a team read-only access, such as an audit or risk team, create a [custom role](/admin/user_management/pro__custom_rbac_roles/):
+
+1. Clone the **Reader** role.
+2. Edit the copy and tick **View** on the **Risk Acceptance** row. Leave **Add**, **Edit** and **Delete** unticked.
+3. Assign the role to the users or groups that need it:
+    * as a membership on an Organization or Asset, to show the Risk Acceptances that cover Findings in it;
+    * as a **Global Role**, to show every Risk Acceptance in the instance.
+
+A user with this role can open the Risk Acceptances list, a Risk Acceptance's details, its history, its notes and its proof file, in the UI and through `/api/v2/risk_acceptance/`. They cannot create, edit, expire, approve or delete a Risk Acceptance, or add notes to one.
 
 ## Expiring and Reinstating a Risk Acceptance
 
@@ -151,6 +202,7 @@ If the Risk Acceptance has **already expired** — meaning the periodic job has 
 
 - The Risk Acceptance is reinstated and is no longer in the expired state.
 - Every Finding that was linked to the Risk Acceptance and is currently Active is re-accepted (set back to Risk Accepted / Inactive).
+- A Finding that has been Risk Accepted again since the expiry, through another Risk Acceptance or a Simple Risk Acceptance, stays where it is: it is removed from the reinstated Risk Acceptance, so it is never held by two at once.
 - Endpoint statuses on those Findings are updated to reflect the re-acceptance.
 - A comment is posted to any linked Jira issues recording the reinstate.
 
@@ -387,7 +439,9 @@ status band, **Exception Requested**, instead of **Active**:
 - Findings waiting on a decision carry an **Exception Requested** badge in Finding tables,
   alongside their real status — the Finding is still Active, and the badge says somebody is
   waiting.
-- Filter Findings on `has_pending_exception` to build that queue.
+- Finding tables offer an **Exception Requested** column, hidden by default: turn it on from the
+  column picker and filter it to Yes to build that queue directly in the table. The same filter is
+  available on the API as `has_pending_exception`.
 - Filter Risk Acceptances on `workflow_state=proposed&workflow_state=under_review` to see the
   requests waiting for a reviewer.
 
@@ -484,7 +538,7 @@ questions:
 | **Risk Acceptance Decided** | it is approved or rejected | whoever requested it |
 
 Both are ordinary notification events, so each user picks their own channels — alert, mail, Slack,
-Teams or **webhook** — under Notification Settings.
+Teams or **webhook** — under **Settings > Notifications > Personal Notifications**.
 
 Activation, expiry and reinstatement are deliberately silent here. They are not somebody waiting on
 somebody else, expiry already has its own long-standing notification, and mailing about every state
@@ -500,14 +554,14 @@ risk_acceptance:
     to_state: "approved"
     actor: "someone"
     reason: "the compensating control is adequate"
-    url_ui: "https://your-instance/ui/risk_acceptance/42"
+    url_ui: "https://your-instance/ui/risk-acceptance/42"
 ```
 
 Notifications are reinforcement, not the mechanism: every state change is already visible on the
 Risk Acceptance, in its Approvals tab and in the review queue, whether or not a message is sent or
 ever arrives. A send that fails is logged and does not undo the decision.
 
-### Rules Engine 2.0 conditions
+### Triage Engine conditions
 
 With both features enabled, a rule can condition on what an acceptance is doing, not just on the
 `Risk Accepted` flag:
@@ -612,6 +666,15 @@ deliberately cannot move back to Proposed, so there is no transition that would 
 
 `reason` is required: a request with no argument cannot be reviewed. `justification` is optional and
 is recorded against every Finding in the request, where it can be edited per Finding afterwards.
+
+**Accept Until** starts at today plus the **Default Risk Acceptance Days** setting, as every new Risk
+Acceptance does, counted from the day of the request; whoever approves it can change the date. Clear
+it to ask for an exception that never expires. Over the API, a request that leaves out
+`expiration_date` gets the same default, and `"expiration_date": null` asks for one that never
+expires.
+
+A Finding that is already Risk Accepted, or that another undecided request already names, cannot be
+requested again (see [One Risk Acceptance per Finding](#one-risk-acceptance-per-finding)).
 
 Requesting needs the same permission as editing a Risk Acceptance, plus permission to view every
 Finding named. Deciding the request needs **Risk Acceptance Approve**, which is what keeps the

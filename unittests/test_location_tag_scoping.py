@@ -1,0 +1,308 @@
+import re
+
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+from rest_framework.authtoken.models import Token
+from rest_framework.test import APIClient
+
+from dojo.authorization.roles_permissions import Roles
+from dojo.location.status import ProductLocationStatus
+from dojo.models import (
+    Dojo_User,
+    Product,
+    Product_Member,
+    Product_Type,
+    Role,
+    System_Settings,
+    User,
+)
+from dojo.tags.inheritance import apply_inherited_tags_for_locations
+from dojo.url.models import URL
+from unittests.dojo_test_case import DojoTestCase, skip_unless_v3
+
+FOREIGN = "tagscope-foreign.example.test"
+OWN = "tagscope-own.example.test"
+BOTH_MINE = "tagscope-both-mine.example.test"
+INHERIT = "tagscope-inherit.example.test"
+
+FOREIGN_TAG = "foreignsecret"
+OWN_TAG = "myowntag"
+INHERITED_TAG = "inheritedsecret"
+
+
+@skip_unless_v3
+class LocationTagScopingTest(DojoTestCase):
+
+    """
+    A Location row is deduplicated globally and carries one tag set for every product that
+    references it. The tag set must only be served to a caller authorized for every product
+    on the row, and the tag filters must not match on a set the body withholds.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        prod_type, _ = Product_Type.objects.get_or_create(name="TagScope PT")
+        reader = Role.objects.get(id=Roles.Reader)
+
+        def product(name, **kwargs):
+            return Product.objects.create(name=name, description=name, prod_type=prod_type, **kwargs)
+
+        cls.mine = product("TagScope Mine")
+        cls.also_mine = product("TagScope Also Mine")
+        cls.theirs = product("TagScope Theirs")
+        cls.theirs_inheriting = product(
+            "TagScope Theirs Inheriting", enable_product_tag_inheritance=True,
+        )
+        cls.theirs_inheriting.tags.set([INHERITED_TAG])
+
+        cls.alice = User.objects.create_user(
+            username="tagscope_alice",
+            password="not-a-real-secret",  # noqa: S106 - test fixture user
+        )
+        alice = Dojo_User.objects.get(pk=cls.alice.pk)
+        for owned in (cls.mine, cls.also_mine):
+            Product_Member.objects.create(user=cls.alice, product=owned, role=reader)
+            owned.authorized_users.add(alice)
+
+        def location(host, *products):
+            loc = URL.get_or_create_from_values(protocol="https", host=host, path="x").location
+            for prod in products:
+                loc.associate_with_product(prod, status=ProductLocationStatus.Active)
+            return loc
+
+        # Shared with a product Alice cannot see: the tag set is not hers to read.
+        cls.foreign = location(FOREIGN, cls.mine, cls.theirs)
+        cls.foreign.tags.set([FOREIGN_TAG])
+
+        # Only Alice's product references it.
+        cls.own = location(OWN, cls.mine)
+        cls.own.tags.set([OWN_TAG])
+
+        # Shared, but only between two products Alice holds: still hers to read.
+        cls.both_mine = location(BOTH_MINE, cls.mine, cls.also_mine)
+        cls.both_mine.tags.set([OWN_TAG])
+
+        # Product tag inheritance writes the union of contributing products' tags here.
+        cls.inherit = location(INHERIT, cls.mine, cls.theirs_inheriting)
+        apply_inherited_tags_for_locations([cls.inherit], product=cls.theirs_inheriting)
+
+        cls.admin = User.objects.create_superuser(
+            username="tagscope_admin",
+            email="tagscope_admin@example.test",
+            password="not-a-real-secret",  # noqa: S106 - test fixture user
+        )
+        cls.alice_token = Token.objects.get_or_create(user=cls.alice)[0].key
+        cls.admin_token = Token.objects.get_or_create(user=cls.admin)[0].key
+
+    def setUp(self):
+        super().setUp()
+        settings = System_Settings.objects.get(no_cache=True)
+        settings.enable_product_tag_inheritance = False
+        settings.save()
+
+    def _client(self, token):
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Token {token}")
+        return client
+
+    def _get(self, url, token=None):
+        response = self._client(token or self.alice_token).get(url, format="json")
+        self.assertEqual(response.status_code, 200, response.content[:300])
+        return response.json()
+
+    def _endpoint_tags(self, token=None):
+        return {
+            row["host"]: row["tags"]
+            for row in self._get("/api/v2/endpoints/", token)["results"]
+        }
+
+    def _location_row(self, host, token=None):
+        return next(
+            row for row in self._get("/api/v2/location/", token)["results"]
+            if host in row["location_value"]
+        )
+
+    def _hosts(self, query, token=None):
+        return {row["host"] for row in self._get(f"/api/v2/endpoints/?{query}", token)["results"]}
+
+    def test_premise_each_url_is_one_shared_row(self):
+        self.assertEqual({p.name for p in self.foreign.all_related_products()},
+                         {self.mine.name, self.theirs.name})
+        names = {p["name"] for p in self._get("/api/v2/products/")["results"]}
+        self.assertNotIn(self.theirs.name, names)
+
+    def test_endpoint_body_withholds_a_foreign_products_tags(self):
+        self.assertEqual(self._endpoint_tags()[FOREIGN], [])
+
+    def test_endpoint_body_withholds_inherited_foreign_product_tags(self):
+        self.assertEqual(self._endpoint_tags()[INHERIT], [])
+
+    def test_endpoint_body_still_serves_an_unshared_rows_tags(self):
+        self.assertEqual(self._endpoint_tags()[OWN], [OWN_TAG])
+
+    def test_endpoint_body_still_serves_a_row_shared_only_within_my_products(self):
+        self.assertEqual(self._endpoint_tags()[BOTH_MINE], [OWN_TAG])
+
+    def test_endpoint_body_still_complete_for_a_superuser(self):
+        self.assertEqual(self._endpoint_tags(self.admin_token)[FOREIGN], [FOREIGN_TAG])
+
+    def test_endpoint_filters_do_not_match_a_foreign_tag(self):
+        for query in (
+            f"tag={FOREIGN_TAG[:12]}",
+            f"tags={FOREIGN_TAG}",
+            f"tags__and={FOREIGN_TAG}",
+            f"tag={INHERITED_TAG[:12]}",
+        ):
+            self.assertEqual(self._hosts(query), set(), query)
+
+    def test_endpoint_negated_filters_treat_a_foreign_tag_set_as_empty(self):
+        self.assertIn(FOREIGN, self._hosts(f"not_tag={FOREIGN_TAG[:12]}"))
+        self.assertNotIn(FOREIGN, self._hosts("has_tags=true"))
+
+    def test_endpoint_filters_still_match_my_own_tags(self):
+        self.assertEqual(self._hosts(f"tag={OWN_TAG}"), {OWN, BOTH_MINE})
+        self.assertEqual(self._hosts(f"tags={OWN_TAG}"), {OWN, BOTH_MINE})
+        self.assertEqual(self._hosts(f"tags__and={OWN_TAG}"), {OWN, BOTH_MINE})
+        self.assertEqual(self._hosts("has_tags=true"), {OWN, BOTH_MINE})
+
+    def test_location_body_withholds_tags_and_inherited_tags(self):
+        foreign = self._location_row(FOREIGN)
+        self.assertEqual(foreign["tags"], [])
+        inherit = self._location_row(INHERIT)
+        self.assertEqual(inherit["tags"], [])
+        self.assertEqual(inherit["inherited_tags"], [])
+
+    def test_location_body_still_serves_my_own_tags(self):
+        self.assertEqual(self._location_row(OWN)["tags"], [OWN_TAG])
+
+    def test_location_body_still_complete_for_a_superuser(self):
+        self.assertEqual(
+            self._location_row(INHERIT, self.admin_token)["inherited_tags"], [INHERITED_TAG],
+        )
+
+    def test_location_filters_do_not_match_a_foreign_tag(self):
+        for query in (
+            f"tags__name_exact={FOREIGN_TAG}",
+            f"tags__name_contains={FOREIGN_TAG[:12]}",
+            f"tags__name_starts_with={FOREIGN_TAG[:9]}",
+            f"tags__name_ends_with={FOREIGN_TAG[-4:]}",
+            f"tags__name_includes={FOREIGN_TAG}",
+            f"tags__name_exact={INHERITED_TAG}",
+        ):
+            self.assertEqual(self._get(f"/api/v2/location/?{query}")["count"], 0, query)
+
+    def test_location_filters_still_match_my_own_tags(self):
+        for query in (
+            f"tags__name_exact={OWN_TAG}",
+            f"tags__name_contains={OWN_TAG[:12]}",
+            f"tags__name_includes={OWN_TAG}",
+        ):
+            self.assertEqual(self._get(f"/api/v2/location/?{query}")["count"], 2, query)
+
+    # Regression: with Locations on, both list endpoints ran about four queries per row (the row's
+    # Location and URL, one readability EXISTS per tag set, and each tag set) where the Locations-off
+    # endpoints list runs a fixed handful, so a 500-row page cost about 2,000 queries.
+    def _count_list_queries(self, url, token):
+        self._get(url, token)  # warm per-process caches so both sizes compare only per-row work
+        with CaptureQueriesContext(connection) as ctx:
+            self._get(url, token)
+        return len(ctx.captured_queries)
+
+    def _add_own_locations(self, count):
+        added = getattr(self, "_added", 0)
+        for idx in range(added, added + count):
+            loc = URL.get_or_create_from_values(protocol="https", host=f"tagscope-n{idx}.example.test", path="x").location
+            loc.associate_with_product(self.mine, status=ProductLocationStatus.Active)
+            loc.tags.set([OWN_TAG])
+        self._added = added + count
+
+    def test_list_query_count_does_not_scale_with_rows(self):
+        for url in ("/api/v2/location/", "/api/v2/endpoints/"):
+            for who, token in (("alice", self.alice_token), ("admin", self.admin_token)):
+                with self.subTest(url=url, user=who):
+                    small = self._count_list_queries(url, token)
+                    self._add_own_locations(3)
+                    large = self._count_list_queries(url, token)
+                    self.assertLessEqual(
+                        large, small,
+                        msg=f"{url} as {who}: query count scales with rows (N+1). before={small}, after 3 more rows={large}",
+                    )
+
+    # Regression: the Locations-backed endpoints list deduplicated every reference row with DISTINCT,
+    # so the pagination count wrapped a DISTINCT over every row (about 4 s per page on 5M references).
+    # No join in that queryset can repeat a row: the location and URL are one-to-one, and the
+    # authorization and tag filters are semi-joins. The rows must stay unique without it.
+    def test_endpoint_list_count_does_not_dedupe_every_row(self):
+        with CaptureQueriesContext(connection) as ctx:
+            self._get("/api/v2/endpoints/", self.alice_token)
+        counts = [q["sql"] for q in ctx.captured_queries if "COUNT(" in q["sql"].upper()]
+        self.assertTrue(counts, "expected a pagination count query")
+        for sql in counts:
+            self.assertNotIn("DISTINCT", sql.upper(), sql)
+
+    def test_endpoint_list_rows_stay_unique(self):
+        for query in ("", f"tags={OWN_TAG}", "has_tags=true", "o=host", f"product={self.mine.id}", f"not_tags={FOREIGN_TAG}"):
+            for token in (self.alice_token, self.admin_token):
+                with self.subTest(query=query, admin=token == self.admin_token):
+                    body = self._get(f"/api/v2/endpoints/?limit=1000&{query}", token)
+                    ids = [row["id"] for row in body["results"]]
+                    self.assertEqual(len(ids), len(set(ids)), ids)
+                    self.assertEqual(body["count"], len(ids))
+
+    # Regression: the locations list annotated tag readability onto every row with an EXISTS that walks
+    # all of the row's finding references through finding, test and engagement. That ran before
+    # OFFSET/LIMIT, and for a caller who reads every product (a superuser) the anti-join can never stop
+    # early, so a page holding a few heavily shared locations took 5 to 25 s of SQL.
+    def _list_sql(self, url, token):
+        with CaptureQueriesContext(connection) as ctx:
+            body = self._get(url, token)
+        return body, [q["sql"] for q in ctx.captured_queries]
+
+    def test_location_list_skips_readability_for_a_caller_who_reads_every_product(self):
+        body, queries = self._list_sql("/api/v2/location/?limit=1000&ordering=id", self.admin_token)
+        self.assertTrue(body["results"])
+        for sql in queries:
+            self.assertNotIn("dojo_locationfindingreference", sql, sql)
+
+    def test_location_list_checks_readability_for_the_page_only(self):
+        body, queries = self._list_sql("/api/v2/location/?limit=2&offset=1&ordering=id", self.alice_token)
+        page_ids = sorted(row["id"] for row in body["results"])
+        self.assertEqual(len(page_ids), 2)
+        walks = [sql for sql in queries if "dojo_locationfindingreference" in sql]
+        # One readability query, bound to the page's ids, never the COUNT or the page query.
+        self.assertEqual(len(walks), 1, walks)
+        self.assertNotIn("COUNT(", walks[0].upper())
+        self.assertNotIn("OFFSET", walks[0].upper())
+        bound = re.search(r'"dojo_location"\."id" IN \(([\d, ]+)\)', walks[0])
+        self.assertIsNotNone(bound, walks[0])
+        self.assertEqual(sorted(int(pk) for pk in bound.group(1).split(",")), page_ids)
+
+    def test_location_list_readability_holds_on_every_page(self):
+        expected = {FOREIGN: [], INHERIT: [], OWN: [OWN_TAG], BOTH_MINE: [OWN_TAG]}
+        total = self._get("/api/v2/location/?limit=1", self.alice_token)["count"]
+        seen = {}
+        for offset in range(total):
+            row = self._get(f"/api/v2/location/?limit=1&offset={offset}&ordering=id", self.alice_token)["results"][0]
+            host = next((h for h in expected if h in row["location_value"]), None)
+            if host:
+                seen[host] = row["tags"]
+        self.assertEqual(seen, expected)
+
+    def test_location_detail_checks_readability_once(self):
+        # The serializer reads both tag sets; the readability check must not run once per set.
+        for who, token, walks in (("alice", self.alice_token, 1), ("admin", self.admin_token, 0)):
+            with self.subTest(user=who):
+                _, queries = self._list_sql(f"/api/v2/location/{self.foreign.id}/", token)
+                product_checks = [sql for sql in queries if sql.startswith('SELECT 1 AS "a" FROM "dojo_product" WHERE NOT')]
+                self.assertEqual(len(product_checks), 1, product_checks)
+                self.assertEqual(len([sql for sql in queries if "dojo_locationfindingreference" in sql]), walks)
+
+    def test_location_detail_readability(self):
+        cases = (
+            (self.alice_token, self.foreign, []),
+            (self.alice_token, self.own, [OWN_TAG]),
+            (self.admin_token, self.foreign, [FOREIGN_TAG]),
+        )
+        for token, loc, tags in cases:
+            with self.subTest(location=loc.location_value, admin=token == self.admin_token):
+                self.assertEqual(self._get(f"/api/v2/location/{loc.id}/", token)["tags"], tags)

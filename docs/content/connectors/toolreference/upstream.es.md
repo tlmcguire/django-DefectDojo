@@ -17,6 +17,8 @@ Al configurar un Conector para una herramienta compatible, deberá proporcionar 
 * **Location** \-un campo que generalmente hace referencia a la URL de su herramienta dentro de su red,
 * **Secret** \- generalmente, una clave de API.
 
+Muchas herramientas usan un único host de API fijo. Para esas, DefectDojo completa el campo **Location** cuando agrega el Conector, así que no necesita copiar la URL de esta página. Conserve el valor que aparece. Cámbielo solo si su instancia usa otro host, por ejemplo una instalación autoalojada o una región distinta.
+
 Algunas herramientas requerirán campos adicionales relacionados con la API además de **Location** y **Secret**. También pueden requerir que realice cambios de su lado para admitir un Conector entrante desde DefectDojo.
 
 ![imagen](images/connectors_tool_reference.png)
@@ -32,7 +34,7 @@ La mayoría de los Conectores importan **hallazgos** desde una herramienta de se
 * Tanto **Discover** como **Sync** concilian la lista de activos. Los activos nuevos aparecen como Registros `NEW`; una vez asignados (automáticamente, si la asignación automática está habilitada), DefectDojo crea el Producto y lo agrupa bajo un Tipo de producto derivado de la herramienta — por ejemplo, el namespace de GitLab o el proyecto de Azure DevOps.
 * Si más adelante se elimina un activo en el origen (por ejemplo, se elimina un repositorio), su Registro asignado se marca como `MISSING` en la siguiente Sync para que su equipo pueda triarlo. DefectDojo nunca elimina un Producto de forma silenciosa.
 
-Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, Jira Service Management Assets y ServiceNow CMDB son Conectores de activos. runZero es principalmente un Conector de activos, pero opcionalmente puede importar vulnerabilidades como hallazgos. Todos los demás Conectores listados a continuación importan hallazgos.
+Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, Google Cloud, Jira Service Management Assets y ServiceNow CMDB son Conectores de activos. runZero es principalmente un Conector de activos, pero opcionalmente puede importar vulnerabilidades como hallazgos. Todos los demás Conectores listados a continuación importan hallazgos.
 
 # **Conectores compatibles**
 
@@ -66,6 +68,7 @@ Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, Jira Service Management Asse
 - [GitHub](/connectors/toolreference/github/#upstream-connector)
 - [GitHub Advanced Security](/connectors/toolreference/github_advanced_security/)
 - [GitLab](/connectors/toolreference/gitlab/#upstream-connector)
+- [Google Cloud](/connectors/toolreference/google_cloud/)
 - [Google Cloud Security Command Center](/connectors/toolreference/google_cloud_scc/)
 - [Group-IB ASM](/connectors/toolreference/group_ib_asm/)
 - [HackerOne](/connectors/toolreference/hackerone/)
@@ -92,6 +95,7 @@ Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, Jira Service Management Asse
 - [Quay](/connectors/toolreference/quay/)
 - [Rapid7 InsightAppSec](/connectors/toolreference/rapid7_insightappsec/)
 - [Rapid7 InsightVM](/connectors/toolreference/rapid7_insightvm/)
+- [Rapid7 InsightVM - Cloud Instance](/connectors/toolreference/rapid7_insightvm_cloud/)
 - [runZero](/connectors/toolreference/runzero/)
 - [Semgrep](/connectors/toolreference/semgrep/)
 - [ServiceNow CMDB](/connectors/toolreference/servicenow_cmdb/)

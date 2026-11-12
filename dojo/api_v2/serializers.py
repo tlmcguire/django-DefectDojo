@@ -4,8 +4,8 @@ import re
 import time
 from datetime import datetime
 
+import django_tagulous as tagulous
 import six
-import tagulous
 from django.conf import settings
 from django.contrib.auth.models import Permission
 from django.core.exceptions import ValidationError
@@ -24,7 +24,7 @@ from dojo.importers.base_importer import BaseImporter
 from dojo.importers.default_importer import DefaultImporter
 from dojo.importers.default_reimporter import DefaultReImporter
 from dojo.location.feature import locations_enabled
-from dojo.location.models import Location
+from dojo.location.models import Location, LocationProductReference
 from dojo.location.queries import get_authorized_locations
 from dojo.models import (
     DEDUPLICATION_EXECUTION_MODE_CHOICES,
@@ -53,6 +53,7 @@ from dojo.models import (
     Test,
     User,
 )
+from dojo.product.queries import get_authorized_products
 from dojo.product_announcements import (
     LargeScanSizeProductAnnouncement,
     ScanTypeProductAnnouncement,
@@ -108,14 +109,14 @@ class DeltaStatisticsSerializer(serializers.Serializer):
 class ImportStatisticsSerializer(serializers.Serializer):
     before = SeverityStatusStatisticsSerializer(
         required=False,
-        help_text="Finding statistics as stored in Defect Dojo before the import",
+        help_text=_("Finding statistics as stored in Defect Dojo before the import"),
     )
     delta = DeltaStatisticsSerializer(
         required=False,
-        help_text="Finding statistics of modifications made by the reimport. Only available when TRACK_IMPORT_HISTORY has not been disabled.",
+        help_text=_("Finding statistics of modifications made by the reimport. Only available when TRACK_IMPORT_HISTORY has not been disabled."),
     )
     after = SeverityStatusStatisticsSerializer(
-        help_text="Finding statistics as stored in Defect Dojo after the import",
+        help_text=_("Finding statistics as stored in Defect Dojo after the import"),
     )
 
 
@@ -214,6 +215,15 @@ class MetaSerializer(serializers.ModelSerializer):
         default=None,
         allow_null=True,
     )
+    # A Location is shared by every product that recorded the same value, so location
+    # metadata is scoped to one product. ``editable=False`` on the model keeps it out of
+    # ``ModelSerializer``'s generated fields, so it is declared here to be writable.
+    location_product = serializers.PrimaryKeyRelatedField(
+        queryset=Product.objects.all(),
+        required=False,
+        default=None,
+        allow_null=True,
+    )
     finding = serializers.PrimaryKeyRelatedField(
         queryset=Finding.objects.all(),
         required=False,
@@ -222,8 +232,31 @@ class MetaSerializer(serializers.ModelSerializer):
     )
 
     def validate(self, data):
-        if locations_enabled() and "endpoint" in data:
-            data["location"] = data.pop("endpoint")
+        if locations_enabled():
+            # Legacy clients name the location through ``endpoint``. The field defaults to
+            # None, so only an endpoint that was actually given may stand in for ``location``;
+            # popping unconditionally used to replace a real location with None.
+            endpoint = data.pop("endpoint", None)
+            if endpoint is not None:
+                data["location"] = endpoint
+        if (location_product := data.get("location_product")) is not None:
+            if (location := data.get("location")) is None:
+                raise serializers.ValidationError({"location_product": "location_product only applies to location metadata."})
+            if not LocationProductReference.objects.filter(location=location, product=location_product).exists():
+                raise serializers.ValidationError({"location_product": "The product does not reference this location."})
+        elif (location := data.get("location")) is not None and locations_enabled():
+            # Location metadata belongs to one product. A location recorded by a single
+            # product is scoped to it; one recorded by several products takes the caller's
+            # product when that is unambiguous, and otherwise the request has to say which one.
+            referencing = Product.objects.filter(locations__location=location)
+            if referencing.count() == 1:
+                data["location_product"] = referencing.get()
+            elif referencing.count() > 1:
+                user = getattr(self.context.get("request"), "user", None)
+                products = get_authorized_products("edit", user=user).filter(locations__location=location) if user else Product.objects.none()
+                if products.count() != 1:
+                    raise serializers.ValidationError({"location_product": "location_product is required for location metadata."})
+                data["location_product"] = products.get()
         DojoMeta(**data).clean()
         return data
 
@@ -390,25 +423,25 @@ from dojo.test.api.serializer import (  # noqa: E402, F401 -- backward compat re
 class CommonImportScanSerializer(serializers.Serializer):
     scan_date = serializers.DateField(
         required=False,
-        help_text="Scan completion date will be used on all findings.",
+        help_text=_("Scan completion date will be used on all findings."),
     )
 
     minimum_severity = serializers.ChoiceField(
         choices=SEVERITY_CHOICES,
         default="Info",
-        help_text="Minimum severity level to be imported",
+        help_text=_("Minimum severity level to be imported"),
     )
     active = serializers.BooleanField(
-        help_text="Force findings to be active/inactive or default to the original tool (None)", required=False,
+        help_text=_("Force findings to be active/inactive or default to the original tool (None)"), required=False,
     )
     verified = serializers.BooleanField(
-        help_text="Force findings to be verified/not verified or default to the original tool (None)", required=False,
+        help_text=_("Force findings to be verified/not verified or default to the original tool (None)"), required=False,
     )
     endpoint_to_add = serializers.PrimaryKeyRelatedField(
         queryset=Location.objects.all(),
         required=False,
         default=None,
-        help_text="Enter the ID of a Location that is associated with the target Product. New Findings will be added to that Location.",
+        help_text=_("Enter the ID of a Location that is associated with the target Product. New Findings will be added to that Location."),
     )
     file = serializers.FileField(
         allow_empty_file=True,
@@ -426,12 +459,12 @@ class CommonImportScanSerializer(serializers.Serializer):
     engagement_name = serializers.CharField(required=False)
     engagement_end_date = serializers.DateField(
         required=False,
-        help_text="End Date for Engagement. Default is current time + 365 days. Required format year-month-day",
+        help_text=_("End Date for Engagement. Default is current time + 365 days. Required format year-month-day"),
     )
     source_code_management_uri = serializers.URLField(
         max_length=600,
         required=False,
-        help_text="Resource link to source code",
+        help_text=_("Resource link to source code"),
     )
 
     test_title = serializers.CharField(required=False)
@@ -453,13 +486,13 @@ class CommonImportScanSerializer(serializers.Serializer):
     )
     environment = serializers.CharField(required=False)
     build_id = serializers.CharField(
-        required=False, help_text="ID of the build that was scanned.",
+        required=False, help_text=_("ID of the build that was scanned."),
     )
     branch_tag = serializers.CharField(
-        required=False, help_text="Branch or Tag that was scanned.",
+        required=False, help_text=_("Branch or Tag that was scanned."),
     )
     commit_hash = serializers.CharField(
-        required=False, help_text="Commit that was scanned.",
+        required=False, help_text=_("Commit that was scanned."),
     )
     api_scan_configuration = serializers.PrimaryKeyRelatedField(
         allow_null=True,
@@ -468,17 +501,17 @@ class CommonImportScanSerializer(serializers.Serializer):
     )
     service = serializers.CharField(
         required=False,
-        help_text="A service is a self-contained piece of functionality within a Product. "
+        help_text=_("A service is a self-contained piece of functionality within a Product. "
         "This is an optional field which is used in deduplication and closing of old findings when set. "
-        "This affects the whole engagement/product depending on your deduplication scope.",
+        "This affects the whole engagement/product depending on your deduplication scope."),
     )
     group_by = serializers.ChoiceField(
         required=False,
         choices=Finding_Group.GROUP_BY_OPTIONS,
-        help_text="Choose an option to automatically group new findings by the chosen option.",
+        help_text=_("Choose an option to automatically group new findings by the chosen option."),
     )
     create_finding_groups_for_all_findings = serializers.BooleanField(
-        help_text="If set to false, finding groups will only be created when there is more than one grouped finding",
+        help_text=_("If set to false, finding groups will only be created when there is more than one grouped finding"),
         required=False,
         default=True,
     )
@@ -506,11 +539,11 @@ class CommonImportScanSerializer(serializers.Serializer):
     )
     pro = serializers.ListField(read_only=True, required=False)
     apply_tags_to_findings = serializers.BooleanField(
-        help_text="If set to True, the tags will be applied to the findings",
+        help_text=_("If set to True, the tags will be applied to the findings"),
         required=False,
     )
     apply_tags_to_endpoints = serializers.BooleanField(
-        help_text="If set to True, the tags will be applied to the locations",
+        help_text=_("If set to True, the tags will be applied to the locations"),
         required=False,
     )
 
@@ -531,7 +564,7 @@ class CommonImportScanSerializer(serializers.Serializer):
                 queryset=get_authorized_endpoints("view", user=user) if user else Endpoint.objects.none(),
                 required=False,
                 default=None,
-                help_text="Enter the ID of an Endpoint that is associated with the target Product. New Findings will be added to that Endpoint.",
+                help_text=_("Enter the ID of an Endpoint that is associated with the target Product. New Findings will be added to that Endpoint."),
             )
         else:
             self.fields["endpoint_to_add"].queryset = (
@@ -560,7 +593,8 @@ class CommonImportScanSerializer(serializers.Serializer):
         Raises exceptions in the event of an error
         """
         try:
-            logger.debug(f"process_scan called with context: {context}")
+            # Lazy: rendering the context reads the test (and its type) even when debug is off
+            logger.debug("process_scan called with context: %s", context)
             start_time = time.perf_counter()
             importer = self.get_importer(**context)
             context["test"], _, _, _, _, _, _ = importer.process_scan(
@@ -690,27 +724,27 @@ class ImportScanSerializer(CommonImportScanSerializer):
         queryset=Engagement.objects.all(), required=False,
     )
     tags = TagListSerializerField(
-        required=False, allow_empty=True, help_text="Add tags that help describe this scan.",
+        required=False, allow_empty=True, help_text=_("Add tags that help describe this scan."),
     )
     close_old_findings = serializers.BooleanField(
         required=False,
         default=False,
-        help_text="Old findings no longer present in the new report get closed as mitigated when importing. "
+        help_text=_("Old findings no longer present in the new report get closed as mitigated when importing. "
                     "If service has been set, only the findings for this service will be closed; "
                     "if no service is set, only findings without a service will be closed. "
-                    "This only affects findings within the same engagement.",
+                    "This only affects findings within the same engagement."),
     )
     close_old_findings_product_scope = serializers.BooleanField(
         required=False,
         default=False,
-        help_text="Old findings no longer present in the new report get closed as mitigated when importing. "
+        help_text=_("Old findings no longer present in the new report get closed as mitigated when importing. "
                     "If service has been set, only the findings for this service will be closed; "
                     "if no service is set, only findings without a service will be closed. "
                     "This only affects findings within the same product."
-                    "By default, it is false meaning that only old findings of the same type in the engagement are in scope.",
+                    "By default, it is false meaning that only old findings of the same type in the engagement are in scope."),
     )
     version = serializers.CharField(
-        required=False, help_text="Version that was scanned.",
+        required=False, help_text=_("Version that was scanned."),
     )
     # extra fields populated in response
     # need to use the _id suffix as without the serializer framework gets
@@ -739,7 +773,7 @@ class ImportScanSerializer(CommonImportScanSerializer):
         those inputs for any required info that is not present. In the event
         of an error, an exception will be raised and bubble up to the user
         """
-        auto_create = AutoCreateContextManager()
+        auto_create = AutoCreateContextManager.for_request(self.context.get("request"))
         # Process the context to make an conversions needed. Catch any exceptions
         # in this case and wrap them in a DRF exception
         try:
@@ -763,7 +797,10 @@ class ImportScanSerializer(CommonImportScanSerializer):
 
 class ReImportScanSerializer(CommonImportScanSerializer):
 
-    help_do_not_reactivate = "Select if the import should ignore active findings from the report, useful for triage-less scanners. Will keep existing findings closed, without reactivating them. For more information check the docs."
+    help_do_not_reactivate = _(
+        "Keep closed findings closed when they appear in the report again, instead of reactivating them. "
+        "New findings are still created, and open findings are processed as usual.",
+    )
     do_not_reactivate = serializers.BooleanField(
         default=False, required=False, help_text=help_do_not_reactivate,
     )
@@ -779,24 +816,24 @@ class ReImportScanSerializer(CommonImportScanSerializer):
     close_old_findings = serializers.BooleanField(
         required=False,
         default=True,
-        help_text="Old findings no longer present in the new report get closed as mitigated when importing. "
+        help_text=_("Old findings no longer present in the new report get closed as mitigated when importing. "
                     "If service has been set, only the findings for this service will be closed; "
                     "if no service is set, only findings without a service will be closed. "
-                    "This only affects findings within the same test.",
+                    "This only affects findings within the same test."),
     )
     close_old_findings_product_scope = serializers.BooleanField(
         required=False,
         default=False,
-        help_text="This has no effect on reimport",
+        help_text=_("This has no effect on reimport"),
     )
     version = serializers.CharField(
         required=False,
-        help_text="Version that will be set on existing Test object. Leave empty to leave existing value in place.",
+        help_text=_("Version that will be set on existing Test object. Leave empty to leave existing value in place."),
     )
     tags = TagListSerializerField(
         required=False,
         allow_empty=True,
-        help_text="Modify existing tags that help describe this scan. (Existing test tags will be overwritten)",
+        help_text=_("Modify existing tags that help describe this scan. (Existing test tags will be overwritten)"),
     )
 
     def set_context(
@@ -852,7 +889,8 @@ class ReImportScanSerializer(CommonImportScanSerializer):
         """
         statistics_before, statistics_delta = None, None
         try:
-            logger.debug(f"process_scan called with context: {context}")
+            # Lazy: rendering the context reads the test (and its type) even when debug is off
+            logger.debug("process_scan called with context: %s", context)
             start_time = time.perf_counter()
             processor = None
             if test := context.get("test"):
@@ -912,7 +950,7 @@ class ReImportScanSerializer(CommonImportScanSerializer):
         # set the jira option again as it was overridden
         context["push_to_jira"] = push_to_jira
         # Process the auto create context inputs
-        auto_create_manager = AutoCreateContextManager()
+        auto_create_manager = AutoCreateContextManager.for_request(self.context.get("request"))
         self.process_auto_create_create_context(auto_create_manager, context)
         # Import the scan with all of the supplied data
         self.process_scan(auto_create_manager, data, context)

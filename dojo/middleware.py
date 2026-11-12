@@ -2,15 +2,21 @@ import logging
 import re
 import time
 from contextlib import contextmanager, suppress
+from http import HTTPStatus
 from threading import local
 from urllib.parse import quote
 
 import pghistory.middleware
 from django.conf import settings
+from django.contrib import messages
 from django.db import models
 from django.dispatch import receiver
-from django.http import HttpResponseRedirect
+from django.http import HttpResponseRedirect, JsonResponse
 from django.urls import reverse
+from django.utils import translation
+from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils.translation import gettext_lazy
+from rest_framework.permissions import SAFE_METHODS
 from watson.middleware import SearchContextMiddleware
 from watson.search import search_context_manager
 
@@ -119,6 +125,48 @@ class LoginRequiredMiddleware:
         return response
 
 
+READ_ONLY_MODE_MESSAGE = gettext_lazy(
+    "Read-only mode is on. DefectDojo does not accept changes until a superuser turns it off in System Settings.",
+)
+
+
+class ReadOnlyModeMiddleware:
+
+    """Rejects every unsafe request while System_Settings.read_only_mode is on, except READ_ONLY_MODE_EXEMPT_URLS."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+        self.exempt_urls = [re.compile(pattern) for pattern in settings.READ_ONLY_MODE_EXEMPT_URLS]
+        self.retry_urls = [re.compile(pattern) for pattern in settings.READ_ONLY_MODE_RETRY_URLS]
+
+    def __call__(self, request):
+        if request.method in SAFE_METHODS:
+            return self.get_response(request)
+        path = request.path_info.lstrip("/")
+        if any(pattern.match(path) for pattern in self.exempt_urls):
+            return self.get_response(request)
+        if not get_cached_system_settings().read_only_mode:
+            return self.get_response(request)
+
+        if any(pattern.match(path) for pattern in self.retry_urls):
+            response = JsonResponse({"detail": READ_ONLY_MODE_MESSAGE}, status=HTTPStatus.SERVICE_UNAVAILABLE)
+            response["Retry-After"] = str(settings.READ_ONLY_MODE_RETRY_AFTER_SECONDS)
+            return response
+
+        if (
+            path.startswith(f"{settings.URL_PREFIX}api/v")
+            or request.headers.get("HX-Request") == "true"
+            or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        ):
+            return JsonResponse({"detail": READ_ONLY_MODE_MESSAGE}, status=HTTPStatus.LOCKED)
+
+        messages.error(request, READ_ONLY_MODE_MESSAGE)
+        referer = request.headers.get("Referer", "")
+        if not url_has_allowed_host_and_scheme(referer, allowed_hosts={request.get_host()}, require_https=request.is_secure()):
+            referer = reverse("home")
+        return HttpResponseRedirect(referer)
+
+
 class DojoSettingsManagerMiddleware:
     # Caching of the System_Settings singleton lives in dojo.caching (L1+L2). This
     # middleware only (a) resets the request-scoped L1 tier and (b) surfaces a
@@ -218,6 +266,64 @@ class AdditionalHeaderMiddleware:
     def __call__(self, request):
         request.META.update(settings.ADDITIONAL_HEADERS)
         return self.get_response(request)
+
+
+def set_language_cookie(response, language):
+    """Persist (or clear) the UI-language cookie that Django's LocaleMiddleware reads."""
+    if language:
+        response.set_cookie(
+            settings.LANGUAGE_COOKIE_NAME,
+            language,
+            max_age=settings.LANGUAGE_COOKIE_AGE,
+            path=settings.LANGUAGE_COOKIE_PATH,
+            domain=settings.LANGUAGE_COOKIE_DOMAIN,
+            secure=settings.LANGUAGE_COOKIE_SECURE,
+            httponly=settings.LANGUAGE_COOKIE_HTTPONLY,
+            samesite=settings.LANGUAGE_COOKIE_SAMESITE,
+        )
+    else:
+        response.delete_cookie(
+            settings.LANGUAGE_COOKIE_NAME,
+            path=settings.LANGUAGE_COOKIE_PATH,
+            domain=settings.LANGUAGE_COOKIE_DOMAIN,
+        )
+    return response
+
+
+class LanguagePreferenceMiddleware:
+
+    """
+    Seed the language cookie from the user's stored preference when it is missing.
+
+    UserContactInfo.language is the durable, cross-device source of truth. The DB
+    is read only when the django_language cookie is absent (roughly once per
+    browser session); thereafter Django's LocaleMiddleware serves the cookie with
+    no per-request DB access. API requests are skipped: they localize via
+    Accept-Language and their clients typically do not keep cookies, so seeding
+    from the DB there would add a query to every API call.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        seed = ""
+        user = getattr(request, "user", None)
+        if (
+            user is not None
+            and getattr(user, "is_authenticated", False)
+            and settings.LANGUAGE_COOKIE_NAME not in request.COOKIES
+            and not request.path.startswith("/api/")
+        ):
+            contact = getattr(user, "usercontactinfo", None)
+            seed = getattr(contact, "language", "") if contact is not None else ""
+            if seed:
+                translation.activate(seed)
+                request.LANGUAGE_CODE = seed
+        response = self.get_response(request)
+        if seed:
+            set_language_cookie(response, seed)
+        return response
 
 
 class PgHistoryMiddleware(pghistory.middleware.HistoryMiddleware):

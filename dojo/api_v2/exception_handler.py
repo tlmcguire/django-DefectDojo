@@ -1,19 +1,33 @@
 import logging
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import (
+    NON_FIELD_ERRORS,
+    RequestDataTooBig,
+    TooManyFieldsSent,
+    ValidationError,
+)
 from django.db.models.deletion import RestrictedError
 from django.db.utils import IntegrityError
+from django.utils.log import log_response
+from django.utils.translation import gettext as _
 from rest_framework.exceptions import ParseError
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
+from rest_framework.settings import api_settings
 from rest_framework.status import (
     HTTP_400_BAD_REQUEST,
     HTTP_409_CONFLICT,
+    HTTP_410_GONE,
+    HTTP_413_REQUEST_ENTITY_TOO_LARGE,
     HTTP_500_INTERNAL_SERVER_ERROR,
 )
 from rest_framework.views import exception_handler
 
+from dojo.endpoint.models import EndpointDeprecatedError
+from dojo.location.api.deprecation import sunset_body
 from dojo.models import System_Settings
 from dojo.product_announcements import ErrorPageProductAnnouncement
+from dojo.utils import restricted_delete_message
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +51,16 @@ UNIQUE_VIOLATION_RESPONSE_MESSAGE = (
     "a new one."
 )
 
+# Returned for a request whose body is larger than DATA_UPLOAD_MAX_MEMORY_SIZE or
+# that carries more form fields than DATA_UPLOAD_MAX_NUMBER_FIELDS. The message
+# echoes none of the oversized payload and points at the operator-tunable limits.
+UPLOAD_LIMIT_RESPONSE_MESSAGE = (
+    "The request exceeded the server's upload limits (the body is too large, or it "
+    "carries too many form fields). Reduce the size of the request, or ask your "
+    "administrator to raise DD_DATA_UPLOAD_MAX_MEMORY_SIZE / "
+    "DD_DATA_UPLOAD_MAX_NUMBER_FIELDS."
+)
+
 
 def _is_unique_violation(exc) -> bool:
     """
@@ -58,6 +82,53 @@ def _is_unique_violation(exc) -> bool:
     return any(marker in text for marker in UNIQUE_VIOLATION_MESSAGE_MARKERS)
 
 
+def _log_server_error(exc, context, response):
+    request = (context or {}).get("request")
+    if request is None:
+        logger.error(exc, exc_info=True)  # noqa: LOG014
+        return
+    # Django only attaches the traceback to its django.request record (and so to
+    # the admin error email) for exceptions it catches itself. Log it here with the
+    # exception, which also marks the response so Django does not log it again.
+    log_response(
+        "%s: %s",
+        response.reason_phrase,
+        request.path,
+        response=response,
+        request=getattr(request, "_request", request),
+        exception=exc,
+    )
+
+
+# A message that does not end a sentence gets a period, so the next field's message does not run on from it.
+SENTENCE_ENDS = (".", "!", "?", "\u3002", "\uff01", "\uff1f")
+# Keys of an error map that hold messages rather than name a field: DRF's non-field key, Django's ("__all__"),
+# and a "detail" a view raised itself.
+UNNAMED_ERROR_KEYS = frozenset({"detail", NON_FIELD_ERRORS})
+
+
+def _readable_validation_message(detail, path=()):
+    """
+    The messages of a serializer or Django ``ValidationError`` as plain sentences.
+
+    Each field's messages follow its name (a nested field's dotted path); messages that name no field
+    (``non_field_errors``, Django's ``__all__``, ``detail``) read without one. ``str()`` of the error would be a
+    Python repr instead.
+    """
+    if isinstance(detail, dict):
+        unnamed = UNNAMED_ERROR_KEYS | {api_settings.NON_FIELD_ERRORS_KEY}
+        parts = (_readable_validation_message(value, path if key in unnamed else (*path, str(key))) for key, value in detail.items())
+        return " ".join(part for part in parts if part)
+    if isinstance(detail, (list, tuple)):
+        return " ".join(part for part in (_readable_validation_message(value, path) for value in detail) if part)
+    message = str(detail).strip()
+    if not message:
+        return ""
+    if not message.endswith(SENTENCE_ENDS):
+        message += "."
+    return f"{'.'.join(path)}: {message}" if path else message
+
+
 def custom_exception_handler(exc, context):
     # Call REST framework's default exception handler first,
     # to get the standard error response.
@@ -66,18 +137,21 @@ def custom_exception_handler(exc, context):
     if isinstance(exc, ParseError) and "JSON parse error" in str(exc):
         response = Response()
         response.status_code = HTTP_400_BAD_REQUEST
-        response.data = {"message": "JSON request content is malformed"}
+        response.data = {"message": _("JSON request content is malformed")}
     elif isinstance(exc, RestrictedError):
-        # An object cannot be deleted because it has dependent objects.
+        # An object cannot be deleted because it has dependent objects; say how many and of which kinds.
         response = Response()
         response.status_code = HTTP_409_CONFLICT
-        response.data = {}
-        response.data["message"] = str(exc)
+        response.data = {"message": restricted_delete_message(exc)}
     elif isinstance(exc, ValidationError):
         response = Response()
         response.status_code = HTTP_400_BAD_REQUEST
         response.data = {}
-        response.data["message"] = str(exc)
+        # Its messages as sentences, each field's after its name; str() of the error is a list or dict repr.
+        # An error with no message text gets no "message", as an empty serializer error map does.
+        messages = exc.message_dict if hasattr(exc, "error_dict") else exc.messages
+        if message := _readable_validation_message(messages):
+            response.data["message"] = message
         ErrorPageProductAnnouncement(response=response)
     elif isinstance(exc, IntegrityError) and _is_unique_violation(exc):
         # The row the caller wanted to create already exists. Serializers built
@@ -99,28 +173,65 @@ def custom_exception_handler(exc, context):
         # Matching the RestrictedError 409 above, no product announcement is
         # attached to a conflict response.
         response.data = {"message": UNIQUE_VIOLATION_RESPONSE_MESSAGE}
+    elif isinstance(exc, EndpointDeprecatedError):
+        # A v2 route reached the deprecated Endpoint model. Answer the documented
+        # sunset contract rather than the generic 500 below, and log at info: an
+        # expected, documented answer reads as an outage in error reporting.
+        # This branch only catches exceptions raised during DRF's dispatch.
+        logger.info(
+            "endpoint api sunset on %s",
+            (context or {}).get("request", "unknown request"),
+        )
+        response = Response(sunset_body())
+        response.status_code = HTTP_410_GONE
+    elif isinstance(exc, (RequestDataTooBig, TooManyFieldsSent)):
+        # Django's request parser raises these SuspiciousOperation subclasses while
+        # a view (or a permission check) first evaluates request.data: the body is
+        # over DATA_UPLOAD_MAX_MEMORY_SIZE, or there are more form fields than
+        # DATA_UPLOAD_MAX_NUMBER_FIELDS. DRF's default handler returns None for
+        # them, so without this branch they fall through to the generic 500 below
+        # and page on-call through error reporting for a request the caller can
+        # fix. Answer 413 with an actionable message, and log at info so an
+        # expected client-side limit does not read as an outage.
+        # (The import/reimport permission classes catch these earlier and raise a
+        # ValidationError; this branch covers every other write path, e.g. a
+        # finding PATCH, where request.data is only parsed inside the handler.)
+        logger.info(
+            "request exceeded upload limits on %s: %s",
+            (context or {}).get("request", "unknown request"),
+            type(exc).__name__,
+        )
+        response = Response()
+        response.status_code = HTTP_413_REQUEST_ENTITY_TOO_LARGE
+        response.data = {"message": UPLOAD_LIMIT_RESPONSE_MESSAGE}
     elif response is None:
         if System_Settings.objects.get().api_expose_error_details:
             exception_message = str(exc.args[0])
         else:
-            exception_message = "Internal server error, check logs for details"
+            exception_message = _("Internal server error, check logs for details")
         # There is no standard error response, so we assume an unexpected
         # exception. It is logged but no details are given to the user,
         # to avoid leaking internal technical information.
-        logger.error(exc, exc_info=True)  # noqa: LOG014
         response = Response()
         response.status_code = HTTP_500_INTERNAL_SERVER_ERROR
         response.data = {}
         response.data[
             "message"
         ] = exception_message
+        _log_server_error(exc, context, response)
         ErrorPageProductAnnouncement(response=response)
     elif response.status_code < 500:
         # HTTP status codes lower than 500 are no technical errors.
         # They need not to be logged and we provide the exception
         # message, if it is different from the detail that is already
         # in the response.
-        if isinstance(response.data, dict) and str(
+        if isinstance(exc, DRFValidationError) and isinstance(response.data, dict):
+            # The field map says it already; the message repeats it as sentences callers can show. An error map
+            # that has its own "message" key keeps it, and an empty one gets no message.
+            if "message" not in response.data and (message := _readable_validation_message(exc.detail)):
+                response.data["message"] = message
+            ErrorPageProductAnnouncement(response=response)
+        elif isinstance(response.data, dict) and str(
             exc,
         ) != response.data.get("detail", ""):
             response.data["message"] = str(exc)
@@ -128,6 +239,6 @@ def custom_exception_handler(exc, context):
     else:
         # HTTP status code 500 or higher are technical errors.
         # They get logged and we don't change the response.
-        logger.error(exc, exc_info=True)  # noqa: LOG014
+        _log_server_error(exc, context, response)
 
     return response

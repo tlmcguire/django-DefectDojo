@@ -10,6 +10,12 @@ on:
           type: boolean
           default: false
 
+env:
+  # Pull and tag images straight from Docker Hub, never through registry.defectdojo.com:
+  # the images CI built itself are tagged defectdojo/... (= docker.io/defectdojo/...), and CI
+  # pulls must not count as installs.
+  DD_IMAGE_REGISTRY: docker.io
+
 jobs:
   unit_tests:
     name: Rest Framework Unit Tests
@@ -50,7 +56,7 @@ jobs:
 
       # load docker images from build jobs
       - name: Load images from artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: built-docker-image
           pattern: built-docker-image-*
@@ -149,13 +155,35 @@ jobs:
       # no celery or initializer needed for unit tests
       # The database is migrated by this point on both paths -- restored from the
       # snapshot, or migrated by the step above -- so the entrypoint reuses it.
+      #
+      # The watchdog runs on the runner beside the tests and only reads from the
+      # containers. This job intermittently goes silent near the end of the
+      # parallel phase until the timeout below kills it, and the log alone cannot
+      # say why; the watchdog records stacks and database activity when output
+      # stalls, and the "Hang diagnostics" step prints them. See the script.
       - name: Unit tests
         timeout-minutes: 25
-        run: docker compose up --no-deps --exit-code-from uwsgi uwsgi
+        run: |
+          .github/scripts/unit-tests-hang-watchdog.sh "$RUNNER_TEMP/hang-diagnostics.txt" &
+          watchdog=$!
+          rc=0
+          docker compose up --no-deps --exit-code-from uwsgi uwsgi || rc=$?
+          kill "$watchdog" 2>/dev/null || true
+          exit "$rc"
         env:
           DJANGO_VERSION: ${{ matrix.os }}
           DD_V3_FEATURE_LOCATIONS: ${{ inputs.v3_feature_locations }}
           DD_TEST_DB_MODE: reuse
+
+      - name: Hang diagnostics
+        if: always()
+        run: |
+          f="$RUNNER_TEMP/hang-diagnostics.txt"
+          if grep -q "dumping diagnostics" "$f" 2>/dev/null; then
+            cat "$f"
+          else
+            echo "No stall detected."
+          fi
 
       - name: Logs
         if: failure()

@@ -28,6 +28,8 @@ Overall, Findings are designed to work with the Asset Hierarchy to standardize y
 
 Findings are accessible via the sidebar. The submenu provides access to Open and Closed Findings, All Findings (regardless of Open or Closed status), [Risk Accepted Findings](/triage_findings/findings_workflows/os__risk_acceptance/), as well as Findings Templates. Individual Findings are also accessible from within the Test that contains them. 
 
+Through the API, `/api/v2/findings/?engagement=<id>` lists the Findings of one Engagement, `?product=<id>` those of one Asset and `?prod_type=<id>` those of one Organization. Each takes a comma-separated list of ids and combines with every other filter. The longer `test__engagement`, `test__engagement__product` and `test__engagement__product__prod_type` names do the same.
+
 ![image](images/osfindings_ss1.png)
 
 ### Permissions
@@ -73,7 +75,7 @@ In addition to metadata corresponding to the tables in a Finding’s view, optio
 - **CVSS3/CVSS4 vector and score**: The CVSS3 and CVSS4 vector and score of the selected Finding. 
 - **Request and response pairs**: A copy of the message sent by the client and the server's reply to the request.
 - **Endpoints to add**: Vulnerable endpoints that may be affected by the selected Finding that are not reflected in the preceding list of systems/endpoints. 
-- **EPSS score and percentile**: ESS score and percentile for the CVE. 
+- **EPSS score and percentile**: EPSS score and percentile for the CVE. 
 - **KEV date added**: The date the Finding was added to the KEV catalog. 
 - **Fix availability and version**: Defines if there is a fix available for the vulnerability, and the version of the affected component in which the fix was implemented. 
 - **User who requested a defect review**: Records who requested a defect review for the flaw in question. 

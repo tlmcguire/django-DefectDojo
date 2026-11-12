@@ -16,6 +16,8 @@ aliases:
 * **Location** \- 通常、ネットワーク内のツールの URL を指すフィールド
 * **Secret** \- 通常は API キー
 
+多くのツールは固定の API ホストを 1 つだけ公開します。その場合、コネクタを追加した時点で DefectDojo が **Location** を自動入力するため、このページから URL をコピーする必要はありません。入力済みの値はそのまま使用してください。セルフホスト環境や別リージョンなど、お使いのインスタンスが異なるホストを使う場合にのみ変更してください。
+
 ツールによっては、**Location** と **Secret** 以外にも追加の API 関連フィールドが必要になる場合があります。また、DefectDojo からの Connector 接続を受け入れるために、ツール側での設定変更が必要になることもあります。
 
 ![image](images/connectors_tool_reference.png)
@@ -31,7 +33,7 @@ aliases:
 * **Discover** と **Sync** はどちらもアセット一覧を突き合わせます。新しいアセットは `NEW` レコードとして表示され、(自動マッピングが有効な場合は自動的に)マッピングされると、DefectDojo はそのツールから導出された製品タイプ(例えば GitLab の namespace や Azure DevOps のプロジェクト)の下に製品を作成し、グループ化します。
 * アセットが後で上流側で削除された場合(例えばリポジトリが削除された場合)、次の Sync 時にマッピング済みのレコードが `MISSING` としてフラグされ、チームがトリアージできるようになります。DefectDojo が製品を無言で削除することはありません。
 
-Azure DevOps、Backstage、Bitbucket、GitHub、GitLab、Jira Service Management Assets、ServiceNow CMDB は Asset Connectors です。runZero は主に Asset Connector ですが、脆弱性を検出事項としてインポートするオプションも備えています。以下に挙げるその他すべての Connector は検出事項をインポートします。
+Azure DevOps、Backstage、Bitbucket、GitHub、GitLab、Google Cloud、Jira Service Management Assets、ServiceNow CMDB は Asset Connectors です。runZero は主に Asset Connector ですが、脆弱性を検出事項としてインポートするオプションも備えています。以下に挙げるその他すべての Connector は検出事項をインポートします。
 
 # **Supported Connectors**
 
@@ -65,6 +67,7 @@ Azure DevOps、Backstage、Bitbucket、GitHub、GitLab、Jira Service Management
 - [GitHub](/connectors/toolreference/github/#upstream-connector)
 - [GitHub Advanced Security](/connectors/toolreference/github_advanced_security/)
 - [GitLab](/connectors/toolreference/gitlab/#upstream-connector)
+- [Google Cloud](/connectors/toolreference/google_cloud/)
 - [Google Cloud Security Command Center](/connectors/toolreference/google_cloud_scc/)
 - [Group-IB ASM](/connectors/toolreference/group_ib_asm/)
 - [HackerOne](/connectors/toolreference/hackerone/)
@@ -91,6 +94,7 @@ Azure DevOps、Backstage、Bitbucket、GitHub、GitLab、Jira Service Management
 - [Quay](/connectors/toolreference/quay/)
 - [Rapid7 InsightAppSec](/connectors/toolreference/rapid7_insightappsec/)
 - [Rapid7 InsightVM](/connectors/toolreference/rapid7_insightvm/)
+- [Rapid7 InsightVM - Cloud Instance](/connectors/toolreference/rapid7_insightvm_cloud/)
 - [runZero](/connectors/toolreference/runzero/)
 - [Semgrep](/connectors/toolreference/semgrep/)
 - [ServiceNow CMDB](/connectors/toolreference/servicenow_cmdb/)

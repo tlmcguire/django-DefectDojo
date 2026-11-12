@@ -17,6 +17,10 @@ class NucleiParser:
 
     """A class that can be used to parse the nuclei (https://github.com/projectdiscovery/nuclei) JSON report file"""
 
+    # Merging repeated entries keeps every location, so the importer can split a merged finding
+    # back into one finding per location.
+    SPLITTABLE_PER_LOCATION = True
+
     DEFAULT_SEVERITY = "Low"
 
     def get_scan_types(self):
@@ -155,7 +159,10 @@ class NucleiParser:
             )
 
             if locations_enabled():
-                dupe_host = (urlparse(matched).hostname or "") if matched else ""
+                # Prepend "//" for protocol-less URLs so urlparse extracts
+                # the hostname correctly (mirrors LocationData construction).
+                parseable = matched if "://" in matched else "//" + matched
+                dupe_host = (urlparse(parseable).hostname or "") if matched else ""
             else:
                 # TODO: Delete this after the move to Locations
                 dupe_host = str(location.host) if location else ""

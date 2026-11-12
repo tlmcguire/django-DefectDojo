@@ -2,7 +2,7 @@
 title: "Migrating from Open Source to Self-Hosted DefectDojo Pro"
 description: "Move your open source DefectDojo database and media files into a self-hosted DefectDojo Pro deployment"
 draft: false
-weight: 6
+weight: 3
 audience: pro
 ---
 
@@ -10,9 +10,11 @@ This page describes how to move the data from an open source DefectDojo instance
 
 The examples use Amazon Web Services, with either Docker Compose on EC2 or Kubernetes on EKS, and the database on Amazon RDS for PostgreSQL. That is the combination this procedure was validated against. The same sequence applies to other providers that offer managed PostgreSQL and equivalent compute, and to on-premise hardware, with the provider-specific commands changed to suit.
 
-Because you host the deployment, your data stays inside your own environment for the whole migration. You run the export and the restore, and DefectDojo support can assist at any step. If your DefectDojo Pro instance is cloud-hosted by DefectDojo rather than self-hosted, contact [support@defectdojo.com](mailto:support@defectdojo.com) instead, because the DefectDojo team performs the restore for you.
+Because you host the deployment, your data stays inside your own environment for the whole migration. You run the export and the restore, and DefectDojo support can assist at any step. If your DefectDojo Pro instance is cloud-hosted by DefectDojo rather than self-hosted, follow [Migrating from Open Source to DefectDojo Cloud](/get_started/pro/cloud/migrating_from_open_source/) instead, because the DefectDojo team performs the restore for you.
 
 At a high level, you export the database and the media files from the open source instance, restore them into the database and the storage your Pro deployment uses, point Pro at the restored database, and then validate the result.
+
+Running on Kubernetes? The [Kubernetes Migration Runbook & Troubleshooting](/get_started/pro/onprem/kubernetes/migration_runbook/) turns this into a validated, end-to-end Helm sequence, with an error-keyed troubleshooting index and a post-migration verification checklist.
 
 ## Before you start
 
@@ -31,6 +33,8 @@ Your target database. Provision a currently supported PostgreSQL major version, 
 Your restore host. You need a machine in the same network as the database, with the PostgreSQL client tools `pg_restore` and `psql` installed. On AWS, use an EC2 instance in the same VPC, ideally in the same Availability Zone as the RDS instance.
 
 Free disk space. The source server needs room for the database dump and the compressed media archive before you move them.
+
+Your encryption keys. Record the `DD_CREDENTIAL_AES_256_KEY` and `DD_SECRET_KEY` values your open source instance runs with, and give Pro the same ones in Step 6. Tool Configuration credentials are encrypted with the credential key, and a Pro instance with a different key cannot read them.
 
 ## Step 1: Export your database
 
@@ -131,13 +135,29 @@ gunzip -c defectdojo-v<VERSION>-backup.sql.gz | \
   psql -h <db-endpoint> -U <master_user> -d defectdojo
 ```
 
+3. Turn off read-only mode in the restored database. If you turned on read-only mode before the dump (see [Planning the cutover](#planning-the-cutover)), the restored copy is locked too. Clear the setting before you start DefectDojo Pro:
+
+```bash
+psql -h <db-endpoint> -U <master_user> -d defectdojo \
+  -c "UPDATE dojo_system_settings SET read_only_mode = false;"
+```
+
 If the restore reports errors, capture the output and contact support before you strip anything further out of the dump. Removing too much can leave the database in an inconsistent state that is harder to diagnose than the original error.
 
 ## Step 5: Restore your media files
 
 Put the contents of the media archive where your Pro deployment reads uploaded files from. The application looks for them at `/app/media`, which your deployment backs with either a bind mount or a persistent volume. Check the installation documentation supplied with your license for the host path or volume your deployment uses.
 
-For a Docker Compose deployment backed by a named volume:
+{{< tabs "migrate-media-restore" >}}
+{{< tab "Kubernetes" >}}
+Extract the archive locally and copy it into the Django pod, which writes to the persistent volume claim mounted at `/app/media`:
+
+```bash
+kubectl cp ./media-extracted/. <namespace>/<django-pod-name>:/app/media/
+```
+{{< /tab >}}
+{{< tab "Compose" >}}
+For a deployment backed by a named volume:
 
 ```bash
 docker run --rm \
@@ -145,28 +165,42 @@ docker run --rm \
   -v $(pwd):/backup \
   alpine sh -c "tar xzf /backup/defectdojo-v<VERSION>-media.tar.gz -C /media"
 ```
-
-For a Kubernetes deployment, extract the archive locally and copy it into the Django pod, which writes to the persistent volume claim mounted at `/app/media`:
-
-```bash
-kubectl cp ./media-extracted/. <namespace>/<django-pod-name>:/app/media/
-```
+{{< /tab >}}
+{{< /tabs >}}
 
 ## Step 6: Point DefectDojo Pro at the restored database
 
 Update the database connection so Pro uses the database you just restored, then start the application. On first start, Pro runs the database migrations that upgrade the schema from your open source version to the Pro version. Depending on the size of your database and the size of the version gap, this can take a while, and the application is not available until it finishes.
 
-For Docker Compose deployments, set the database URL in your deployment configuration and restart the stack. The exact configuration key and command depend on the version of `dojo-compose-cli` you were supplied, so follow the installation documentation that came with your license. The connection string takes this form:
-
-```text
-postgresql://defectdojo:<app_db_password>@<db-endpoint>:5432/defectdojo
-```
-
-For Kubernetes deployments, set the database URL in your Helm values and redeploy:
+{{< tabs "migrate-db-url" >}}
+{{< tab "Kubernetes" >}}
+Set the database connection and both keys in your Helm values and redeploy:
 
 ```yaml
-databaseUrl: postgresql://defectdojo:<app_db_password>@<db-endpoint>:5432/defectdojo
+database:
+  host: <db-endpoint>
+  port: "5432"
+  name: defectdojo
+  user: defectdojo
+  password: <app_db_password>   # or database.existingSecret
+dojo:
+  secretKey: <DD_SECRET_KEY from open source>
+  credentialAES256Key: <DD_CREDENTIAL_AES_256_KEY from open source>
 ```
+
+The [Kubernetes Migration Runbook](/get_started/pro/onprem/kubernetes/migration_runbook/) covers this step in more detail.
+{{< /tab >}}
+{{< tab "Compose" >}}
+Set the database URL and both keys in the CLI's configuration, then start the stack:
+
+```bash
+sudo -E dojo-compose-cli environment add -k DD_DATABASE_URL -v 'postgres://defectdojo:<app_db_password>@<db-endpoint>:5432/defectdojo'
+sudo -E dojo-compose-cli environment add -k DD_SECRET_KEY -v '<DD_SECRET_KEY from open source>'
+sudo -E dojo-compose-cli environment add -k DD_CREDENTIAL_AES_256_KEY -v '<DD_CREDENTIAL_AES_256_KEY from open source>'
+sudo -E dojo-compose-cli app start
+```
+{{< /tab >}}
+{{< /tabs >}}
 
 Which Pro capabilities are available to your deployment depends on your license and on how you deploy, since some of them are not applicable to a self-hosted install. DefectDojo confirms the set that applies to you during the migration.
 
@@ -175,14 +209,20 @@ Which Pro capabilities are available to your deployment depends on your license 
 Once the application is running against the restored database:
 
 1. Log in to your DefectDojo Pro deployment.
-2. Check that your Assets, Organizations, Engagements, Tests, and Findings are present. Assets and Organizations were called Assets and Organizations in open source.
+2. Check that your Assets, Organizations, Engagements, Tests, and Findings are present. In older open source versions, Assets and Organizations were called Products and Product Types.
 3. Download a representative uploaded file from the UI, for example an attachment on a Finding, Test, or Engagement, to confirm the media restore worked.
 4. Check that user accounts and groups are intact. SSO and other authentication settings usually have to be reconfigured for the new deployment.
 5. Report any discrepancies to your DefectDojo contact.
 
 ## Planning the cutover
 
-The dump is a point-in-time snapshot, so anything created in the open source instance after you take it will not be in the Pro deployment. To avoid losing data, freeze the open source instance for the final dump and cutover, or run the migration during a quiet period.
+The dump is a point-in-time snapshot, so anything created in the open source instance after you take it will not be in the Pro deployment. To avoid losing data, turn on read-only mode in the open source instance before the final dump or the final sync. Read-only mode is available in DefectDojo 3.5.100 and later.
+
+1. Go to **Configuration > System Settings**, select **Read-only mode**, and click **Submit**.
+2. Wait until **Configuration > Celery Status** shows no queued tasks. Then run `celery --app=dojo inspect active` in the Celery worker container, and wait until it reports `empty` for every worker. Tasks that started before the lock still write until they finish, and so do requests that were already running, such as a large scan import. Wait for any running import to finish too.
+3. Take the final dump, or run the final sync. The dump keeps read-only mode turned on, so turn it off in the restored database (Step 4).
+
+While read-only mode is on, DefectDojo rejects changes to your data from the UI and the API, and pauses scheduled background jobs. Inbound Jira and generic webhooks get a `503` response with `Retry-After`, so a sender that retries does not count them as delivered. Everyone can still sign in, sign out and change their password, which records the sign-in on the user. Superusers can still change System Settings. To turn it off, clear **Read-only mode** and click **Submit**.
 
 A dry run is worth the time. Migrate a recent copy first, validate it, and then repeat the process for the real cutover. The second run is faster, and it tells you how long the schema migration in Step 6 is going to take.
 

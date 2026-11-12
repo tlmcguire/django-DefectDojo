@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dojo.models import Dojo_User, Finding, Product
+    from dojo.models import Dojo_User, Finding, Product, Test
 
 
 class BaseLocationManager(ABC):
@@ -32,6 +32,17 @@ class BaseLocationManager(ABC):
 
     def __init__(self, product: Product) -> None:
         self._product = product
+        # The test being imported or reimported, once it exists. Locations recorded during this
+        # import are attributed to it, and reimport status changes touch only its rows.
+        self._test_id: int | None = None
+
+    def set_test(self, test: Test | None) -> None:
+        """Attribute everything recorded from now on to ``test`` (None: each finding's own test)."""
+        self._test_id = test.id if test is not None else None
+
+    def attribution_test_id(self, finding: Finding) -> int:
+        """Return the id of the test a location recorded for ``finding`` is attributed to."""
+        return self._test_id if self._test_id is not None else finding.test_id
 
     @abstractmethod
     def clean_unsaved(self, finding: Finding) -> None:
@@ -40,6 +51,14 @@ class BaseLocationManager(ABC):
     @abstractmethod
     def record_for_finding(self, finding: Finding, extra_locations: list | None = None) -> None:
         """Record items from the finding + any form-added extras for later batch creation."""
+
+    def record_locations_for_finding(self, finding: Finding, locations: list) -> None:  # noqa: B027 - optional, a no-op by default
+        """
+        Record ``locations`` (and nothing else of the finding's) for later batch creation.
+
+        For locations a finding gains from outside its own parsed form, such as another report of
+        the same vulnerability. A manager without separate locations has nothing to record.
+        """
 
     @abstractmethod
     def update_status(self, existing_finding: Finding, new_finding: Finding, user: Dojo_User) -> None:
@@ -52,6 +71,16 @@ class BaseLocationManager(ABC):
     @abstractmethod
     def record_mitigations_for_finding(self, finding: Finding, user: Dojo_User) -> None:
         """Record items on this finding for mitigation."""
+
+    def record_mitigations_for_findings(self, findings: list[Finding], user: Dojo_User) -> None:
+        """
+        Record items on all of these findings for mitigation.
+
+        Same outcome as record_mitigations_for_finding() per finding. A manager whose
+        per-finding call reads the database overrides this with a set-based lookup.
+        """
+        for finding in findings:
+            self.record_mitigations_for_finding(finding, user)
 
     @abstractmethod
     def get_locations_for_tagging(self, findings: list[Finding]):
@@ -98,11 +127,17 @@ class LocationHandler:
 
     # --- Delegates (one per BaseLocationManager method) ---
 
+    def set_test(self, test: Test | None) -> None:
+        return self._manager.set_test(test)
+
     def clean_unsaved(self, finding: Finding) -> None:
         return self._manager.clean_unsaved(finding)
 
     def record_for_finding(self, finding: Finding, extra_locations: list | None = None) -> None:
         return self._manager.record_for_finding(finding, extra_locations)
+
+    def record_locations_for_finding(self, finding: Finding, locations: list) -> None:
+        return self._manager.record_locations_for_finding(finding, locations)
 
     def update_status(self, existing_finding: Finding, new_finding: Finding, user: Dojo_User) -> None:
         return self._manager.update_status(existing_finding, new_finding, user)
@@ -112,6 +147,9 @@ class LocationHandler:
 
     def record_mitigations_for_finding(self, finding: Finding, user: Dojo_User) -> None:
         return self._manager.record_mitigations_for_finding(finding, user)
+
+    def record_mitigations_for_findings(self, findings: list[Finding], user: Dojo_User) -> None:
+        return self._manager.record_mitigations_for_findings(findings, user)
 
     def get_locations_for_tagging(self, findings: list[Finding]):
         return self._manager.get_locations_for_tagging(findings)

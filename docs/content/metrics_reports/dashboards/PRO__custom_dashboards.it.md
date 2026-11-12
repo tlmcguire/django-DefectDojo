@@ -31,7 +31,7 @@ Le Dashboard personalizzabili sono disattivate per impostazione predefinita. Un 
 
 Una volta attivata, la pagina **🏠 Home** mostra la tua dashboard personalizzabile e la [REST API delle Dashboard](../custom-dashboards-api/) diventa disponibile.
 
-> **🔑 Important:** Finché la funzionalità è disattivata, la home page mantiene la dashboard precedente e ogni endpoint `/api/v2/dashboards/` restituisce `403 Dashboard V2 is not enabled.` L'attivazione **non** modifica in alcun modo l'accesso ai dati di nessuno — ogni widget continua a rispettare il controllo degli accessi basato sui ruoli di DefectDojo, quindi ogni utente vede sempre e solo i Riscontri, gli Asset e gli altri record che è autorizzato a visualizzare.
+> **🔑 Important:** Finché la funzionalità è disattivata, la home page mantiene la dashboard precedente e ogni endpoint `/api/v2/dashboards/` restituisce `403 Dashboards 2.0 is not enabled.` L'attivazione **non** modifica in alcun modo l'accesso ai dati di nessuno — ogni widget continua a rispettare il controllo degli accessi basato sui ruoli di DefectDojo, quindi ogni utente vede sempre e solo i Riscontri, gli Asset e gli altri record che è autorizzato a visualizzare.
 
 ## Concetti fondamentali
 
@@ -184,6 +184,7 @@ Elenchi classificati, feed e tabelle integrate.
 | **SLA Burndown** | Riscontri prossimi al superamento dello SLA, classificati per giorni rimanenti, con badge di conto alla rovescia. |
 | **My Work** | La tua coda personale — incarichi, menzioni e revisioni di accettazione del rischio in sospeso. Sempre delimitata all'utente che la visualizza. |
 | **Saved Reports** | Accesso con un clic ai tuoi Template di report salvati. *Richiede la funzionalità Reporting.* |
+| **Top Root Causes** | I cluster di cause radice con il punteggio più alto, con il numero di Riscontri raggruppati da ciascuno, gli Asset interessati e la relativa priorità e fascia di rischio. *Richiede la funzionalità Correlazione delle cause radice.* |
 
 ### Statici e utilità
 

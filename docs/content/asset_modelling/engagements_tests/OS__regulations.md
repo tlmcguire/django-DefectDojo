@@ -21,7 +21,7 @@ Regulations are accessible from within the Configuration submenu of the sidebar.
 
 ### Permissions
 
-All Users can view the list of existing Regulations, regardless of their global role.
+All Users can view the list of existing Regulations.
 
 However, the ability to create, edit, and delete Regulations is limited to Superusers. 
 
@@ -50,7 +50,7 @@ Regulations can be edited by clicking on the Regulation name. Change any desired
 
 ### Deleting Regulations 
 
-Regulations can be deleted by clicking on the Regulation name and selecting **Delete** on the ensuing page. 
+Regulations can be deleted by clicking on the Regulation name and selecting **Delete** on the ensuing page. Deleting a Regulation while it is still linked to an Asset will remove it from that Asset. 
 
 As noted previously, the ability to create, edit, and delete Regulations is reserved only for Superusers.
 

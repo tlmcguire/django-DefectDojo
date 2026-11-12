@@ -15,7 +15,7 @@ Importantly, **Regulations serve only as reference information** and do not them
 
 ### Accessing Regulations 
 
-Regulations are accessible from within the Configuration submenu of the sidebar.
+Regulations are accessible from **Settings > Configuration > Regulations** in the sidebar.
 
 ![image](images/regulations_ss1.png)
 
@@ -50,7 +50,7 @@ Regulations can be edited by clicking the ⋮ kebab icon to the left of the desi
 
 ### Deleting Regulations 
 
-Regulations can be deleted by clicking the ⋮ kebab icon to the left of the desired Regulation and selecting **Delete Regulation** from the dropdown menu.
+Regulations can be deleted by clicking the ⋮ kebab icon to the left of the desired Regulation and selecting **Delete Regulation** from the dropdown menu. Deleting a Regulation while it is still linked to an Asset will remove it from that Asset.
 
 As noted previously, the ability to create, edit, and delete Regulations is reserved only for Superusers.
 

@@ -12,7 +12,7 @@ DefectDojo's Rules Engine allows you to build custom workflows and bulk actions 
 
 Rules Engine can only be accessed through the [Pro UI](/get_started/about/ui_pro_vs_os/).
 
-**Looking for the graph editor?** [Rules Engine 2.0](/automation/rules_engine_2/about/) builds automation as visual node graphs, and adds branching, outbound actions such as tickets and messages, per-run traces and a delivery ledger. Both engines run side by side, and existing rules can be [converted across](/automation/rules_engine_2/converting_from_rules_engine/).
+**Looking for the graph editor?** [Triage Engine](/automation/triage_engine/about/) builds automation as visual node graphs, and adds branching, outbound actions such as tickets and messages, per-run traces and a delivery ledger. Both engines run side by side, and existing rules can be [converted across](/automation/triage_engine/converting_from_rules_engine/).
 
 ## Enabling Rules Engine
 
@@ -20,13 +20,13 @@ Rules Engine is in Beta and is off by default. A superuser can turn it on from *
 
 Currently, Rules can only be created for Findings, however more object types will be supported in the future.
 
-Rules can be triggered manually from the **All Rules** page, or scheduled to run automatically on a recurring schedule.  When a rule is triggered, it will be applied to all existing Findings that match the filter conditions set.
+Rules can be triggered manually from the **Classic Rules** page, or scheduled to run automatically on a recurring schedule.  When a rule is triggered, it will be applied to all existing Findings that match the filter conditions set.
 
 ## Possible Rule Actions
 Each Rule can apply one or more of these changes to a Finding when it is triggered successfully (i.e. matches the set Filter conditions).
 
 ### Field Modifications
-* **Set a field** on a Finding, including Title, Description, Severity, CVSSv3 Vector, Active, Verified, Risk Accepted, False Positive, Mitigated
+* **Set a field** on a Finding, including Title, Description, Severity, CVSSv3 Vector, Active, Verified, Risk Accepted, False Positive, Mitigated. Setting False Positive or Mitigated on a risk-accepted Finding takes it out of its risk acceptance first, as closing it by hand does.
 * **Append or Prepend text** to a Finding's Title or Description
 * **Set Priority** — override the calculated Priority value on a Finding (overrides automatic priority calculation)
 * **Set Risk** — override the calculated Risk level on a Finding (overrides automatic risk calculation)
@@ -47,7 +47,7 @@ Each Rule can apply one or more of these changes to a Finding when it is trigger
 Rules are automatically triggered when a Finding meets specific Filter conditions. For more information on Filters that can be used to create Rule Actions, see the [Filter Index](/navigation/pro__filter_index) page.
 
 ## Creating a New Rule
-Start this process from the New Rule page.  In the [Pro UI](/get_started/about/ui_pro_vs_os/), under **Manage Category**, Expand the **Rules Engine** dropdown and click **+ New Rule**.
+In the [Pro UI](/get_started/about/ui_pro_vs_os/), open **Act > Triage Engine > Classic Rules** and select **New Rule**.
 
 ![image](images/rules_engine_1.png)
 
@@ -57,7 +57,7 @@ Enter a Label as the identifier for the new rule, and click Next.
 ![image](images/rules_engine_2.png)
 
 ### Step 2: Set trigger conditions with a Filter
-You will see an All Findings table.  Using the All Findings Table, set the Filter conditions to filter the set of Findings that you want your rule to apply to.  For more information on applying Filters to a table, see [our guide to the Pro UI](/get_started/about/ui_pro_vs_os/#navigational-changes).
+You will see an All Findings table.  Using the All Findings Table, set the Filter conditions to filter the set of Findings that you want your rule to apply to.  For more information on applying Filters to a table, see [our guide to the Pro UI](/get_started/about/ui_pro_vs_os/#tables).
 
 The table will preview the list of existing Findings that you have filtered.
 
@@ -102,7 +102,7 @@ For example, in the screenshot above we have a list of Findings that will be aff
 You will be prompted again to confirm that you want your Rule to be created.  Note that the **Rule will not be applied immediately**, and must be triggered manually.
 
 ## Running a Rule
-From the All Rules page, you can select a Rule you wish to run.  Click on the title of the rule to view it in more detail.
+From the **Classic Rules** page (**Act > Triage Engine > Classic Rules**), you can select a Rule you wish to run.  Click on the title of the rule to view it in more detail.
 
 ![image](images/rules_engine_6.png)
 

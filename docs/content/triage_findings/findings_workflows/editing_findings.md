@@ -19,7 +19,7 @@ This will open the **Edit Finding** form, where you can edit the metadata, chang
 
 ### Edit Finding Form: Fields
 
-* **"Test" cannot be edited:** Findings always have to be associated with a Test object, and cannot be moved out of that context. However, the Engagement containing a Test can be moved to another Asset.  
+* **"Test" cannot be edited here:** Findings always have to be associated with a Test object. The **Test** field on this form is read-only, and the Engagement containing a Test can be moved to another Asset. In the DefectDojo Pro UI you can also move or copy a Finding to another Test — in the same Engagement, another Engagement, or another Asset — with **Move or Copy Finding** in its ⋮ menu; see [Move or Copy](/triage_findings/findings_workflows/pro__bulk_edit_findings/#move-or-copy). Changing `test` in an API update of a Finding has no effect; automations use `POST /api/v2/findings/{id}/move/` instead.  
 ​
 * **Found By** is the scan tool which discovered this Finding. Note that you can add additional scan tools beyond the tool associated with the Test.  
 ​
@@ -27,7 +27,7 @@ This will open the **Edit Finding** form, where you can edit the metadata, chang
 ​
 * **Date** is meant to represent the date the Finding was uncovered by the scanner \- not necessarily the date the Finding was imported into DefectDojo. This date is pulled from the scan report, but you can update this date to be more accurate if you need to (for example, if working with historical data, or if using a scanning tool which does not log discovery dates).  
 ​
-* **Description** is the description of a Finding provided by the scan tool. You can add or remove information from the Finding Description if you wish.  
+* **Description** is the description of a Finding provided by the scan tool. You can add or remove information from the Finding Description if you wish. Screenshots can be pasted or dropped straight into the Description and the other markdown fields (Mitigation, Impact, Steps to Reproduce, Severity Justification, References); see [The Markdown Editor](/navigation/pro__markdown_editor/).  
 ​
 * **Severity** is calculated based on several factors. At a base level, this will be the Severity reported by a tool, but a Finding’s Severity can be affected by EPSS changes. You can also manually adjust the Finding’s Severity to an appropriate level.  
 ​
@@ -35,7 +35,12 @@ This will open the **Edit Finding** form, where you can edit the metadata, chang
 ​
 * **Active / Verified** are the primary Finding statuses used by a tool. Active Findings are Findings that are currently active in your network and have been reported by a tool. Verified means that this Finding has been confirmed to exist by a team member.  
 ​
-* **SAST / DAST** are labels used to organize your Findings into the context they were discovered in. Generally, this label is populated based on the scanning tool used, but you can adjust this to a more accurate level (for example, if the Finding was found by both a SAST and a DAST tool).
+* **SAST / DAST** are labels used to organize your Findings into the context they were discovered in. Generally, this label is populated based on the scanning tool used, but you can adjust this to a more accurate level (for example, if the Finding was found by both a SAST and a DAST tool).  
+​
+* **Threat Intelligence** (a collapsed panel under **Optional Fields**) holds the EPSS Score, EPSS Percentile, Known Exploited, Used in Ransomware and KEV Date Added values, plus **Exploit Maturity** and **Reachability**. These are normally written by the [EPSS / KEV sync](/triage_findings/finding_scoring/epss_kev/) and the [Threat Intelligence](/asset_modelling/pro_hierarchy/threat_intelligence/) and [Reachability](/triage_findings/finding_scoring/reachability/) features, which run nightly, after each import, and on demand from the Vulnerability Explorer. You can set them by hand, which matters when no scanner or feed supplies them, but treat a hand-entered value as provisional on any Finding that references a CVE: the next sync replaces the EPSS/KEV fields and **Exploit Maturity** with the feed's values, and clears the KEV fields when none of the Finding's CVEs are in the CISA catalog. A Finding without a CVE is never enriched, so it keeps whatever you enter. Hand-set values feed the priority and risk calculation exactly as synced values do — a manual **Exploit Maturity** of *Active in the wild* applies the actively-exploited floor, and a manual **Reachability** applies the reachable floor.
+  * **Exploit Maturity** is a dropdown: *None*, *Proof-of-Concept*, *Weaponized*, or *Active in the wild*. Leaving it blank means "no value", which is distinct from *None*.
+  * **Reachability** sets a manual reachability verdict when no scanner reports one. It is recorded as a *manual* verdict source rather than replacing the resolved value outright: a stronger scanner verdict still supersedes it in the **Resolved** value shown beneath the field, and a manual verdict is never removed by the reachability staleness sweep. Choose *No manual override* to clear it.
+  * A Rules Engine rule that should react to a hand-set flag needs a condition on **KEV: Known Exploited**; the FedRAMP "route unrated findings for impact review" template keys on **Exploit Maturity**, which can now be either fed by the threat-intelligence feed or set by hand here.
 
 ### Editing the Mitigated Date and Mitigated By
 
@@ -47,6 +52,24 @@ Editing can be turned on with the `DD_EDITABLE_MITIGATED_DATA` server setting. W
 * **Everything stays auditable:** every change to a Finding, including edits to the Mitigated Date and Mitigated By, is captured in the Finding's history log — who made the change, when, and the previous and new values.
 * **Applying the setting:** `DD_EDITABLE_MITIGATED_DATA` is a server-level environment variable (see [Configuration](/get_started/open_source/configuration/)). Changing it requires a service restart to take effect.
 * **DefectDojo Cloud / Pro:** this setting cannot be changed from the UI. Contact DefectDojo Support to have it enabled for your instance.
+
+## Change a Field in Place
+
+In DefectDojo Pro, a few fields can be changed on the Finding page itself, without opening the Edit Finding form: the **Title** and **Tags** in the page header, and **Severity**, **Assignees**, **Planned Remediation Date** and **Description** wherever the page layout shows them (a field tile or a row of the details table).
+
+* An editable value is highlighted when you hover over it. Click the value (or Tab to it and press **Enter**) to open a small editor under it, with the value already in it.
+* **Enter**, or clicking anywhere else, keeps the change and closes the editor. **Esc** puts the value back. In the Description, **Enter** starts a new line, and **Ctrl+Enter** (**Cmd+Enter** on a Mac) keeps the change. A value that breaks a rule (such as an empty Title) keeps the editor open with the reason.
+* A kept change is not saved yet: the field shows the new value marked **Unsaved**, and you can change several fields this way.
+* A card at the bottom of the page names every changed field. **Save Changes** saves them all in one go, and **Discard** drops them. Leaving the page with unsaved changes asks first.
+* A saved change updates the rest of the page with it, such as the SLA and Risk that follow from a new Severity.
+* If someone else changed the Finding after you opened the page, nothing is overwritten. DefectDojo shows **Finding Changed**, naming who made the change and when, and offers **Reload** (load the current Finding and discard your changes) or **Keep Editing** (keep them to save later).
+* A refused save (for example, a value the server rejects, or a permission removed while the page was open) shows one message with the reason and keeps your changes.
+
+Status is never changed in place. Closing a Finding as Mitigated, False Positive or Out of Scope stays in **Close Finding**, which asks for a note, and the other status changes keep their own forms.
+
+Only users who can edit the Finding can open a value. A field hidden by [Form Configuration](/navigation/pro__form_configuration/) cannot be edited in place either, and a field Form Configuration makes required keeps that rule. Inline editing is controlled by the **Inline Editing** feature flag.
+
+In DefectDojo Pro, a Findings list can also be worked through one Finding at a time from the keyboard: see [Keyboard Triage](/triage_findings/findings_workflows/pro__keyboard_triage/).
 
 ## Bulk Edit Findings
 

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load filter_tags %}
+{% load i18n %}
 {% load humanize %}
 {% load display_tags %}
 {% block content %}
@@ -9,7 +10,7 @@
             <div class="panel panel-default">
                 <div class="panel-heading tight">
                     <h3 class="has-filters">
-                        Generate
+                        <i class="fa-solid fa-file-lines dd-card-icon" aria-hidden="true"></i>Generate
                         {% if product_type %}
                             {{ labels.ORG_LABEL }}
                         {% elif product %}
@@ -21,7 +22,7 @@
                         {% endif %}
                         Report
                         <div class="dropdown pull-right">
-                            <button id="show-filters" aria-label="Filters" data-toggle="collapse" data-target="#the-filters" class="btn btn-primary toggle-filters"> <i class="fa-solid fa-filter"></i> <i class="caret"></i> </button>
+                            <button id="show-filters" aria-label="{% trans 'Filters' %}" data-toggle="collapse" data-target="#the-filters" class="btn btn-primary toggle-filters"> <i class="fa-solid fa-filter"></i> <i class="caret"></i> </button>
                         </div>
 
                     </h3>

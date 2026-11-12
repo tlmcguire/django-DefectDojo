@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from rest_framework.relations import PrimaryKeyRelatedField
-from rest_framework.serializers import CharField
+from rest_framework.serializers import CharField, SerializerMethodField
 
 from dojo.api_helpers.serializers import BaseModelSerializer
 from dojo.api_v2.serializers import TagListSerializerField
@@ -38,8 +38,14 @@ class LocationSerializer(BaseModelSerializer):
 
     """Serializer for the Location model with serializers for the related objects."""
 
-    tags = TagListSerializerField(required=False)
-    inherited_tags = TagListSerializerField(required=False)
+    tags = SerializerMethodField()
+    inherited_tags = SerializerMethodField()
+
+    def get_tags(self, obj: Location) -> list[str]:
+        return sorted(tag.name for tag in obj.readable_tags)
+
+    def get_inherited_tags(self, obj: Location) -> list[str]:
+        return sorted(tag.name for tag in obj.readable_inherited_tags)
 
     class Meta:
 
@@ -53,8 +59,8 @@ class LocationFindingReferenceSerializer(BaseModelSerializer):
 
     """Serializer for the LocationFindingReference model with serializers for the related objects."""
 
-    location_type = CharField(read_only=True)
-    location_value = CharField(read_only=True)
+    location_type = CharField(source="location.location_type", read_only=True)
+    location_value = CharField(source="location.location_value", read_only=True)
 
     class Meta:
 
@@ -62,14 +68,16 @@ class LocationFindingReferenceSerializer(BaseModelSerializer):
 
         model = LocationFindingReference
         fields = "__all__"
+        # A reference written through the API belongs to its finding's own test (see the model's save()).
+        read_only_fields = ["test"]
 
 
 class LocationProductReferenceSerializer(BaseModelSerializer):
 
     """Serializer for the LocationProductReference model with serializers for the related objects."""
 
-    location_type = CharField(read_only=True)
-    location_value = CharField(read_only=True)
+    location_type = CharField(source="location.location_type", read_only=True)
+    location_value = CharField(source="location.location_value", read_only=True)
 
     class Meta:
 

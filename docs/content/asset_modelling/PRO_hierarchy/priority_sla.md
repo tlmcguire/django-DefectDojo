@@ -41,8 +41,17 @@ Learn more about Priority and Risk with DefectDojo, Inc.'s May 2025 Office Hours
 
 
 ## How Priority & Risk are calculated
-The range of Priority values is from 0 to 1150. The higher the number, the more urgency
-the Finding is to triage or remediate.
+Priority runs from 0 to the highest Priority the Finding's [Prioritization Engine](#prioritization-engines)
+can produce: about 1250 with the default settings. The higher the number, the more urgent the Finding is to
+triage or remediate.
+
+That upper bound is the Priority of a hypothetical worst-case Finding: the highest Severity, the strongest
+possible exploit evidence, and every Finding-level and Asset-level factor at its maximum. It is computed from
+the engine's multipliers alone, never from the Findings or Assets in your instance, and it counts every
+factor whether or not the feature behind it is enabled, so turning a feature on does not rescale anything.
+
+A Finding's **Risk Score** is its Priority as a share of that bound, on a scale from 0 to 100. A worst-case
+Finding scores 100, and no Finding scores more.
 
 Similar to Severity, Risk is scored from Low -> Medium -> Needs Action -> Urgent.  **Risk** considers Priority fields and may be different from a tool's reported Severity as a result.
 
@@ -60,7 +69,9 @@ All of these metadata fields can be set on the **Edit Asset** form for a given A
 
 * **Criticality** can be set to any value of None, Very Low, Low, Medium, High, or Very
 High. Criticality is a subjective field, so when assigning this field, consider how the
-Asset compares to other Assets in your organization.
+Asset compares to other Assets in your organization. If your CMDB already rates
+criticality, the [ServiceNow CMDB connector](/connectors/toolreference/servicenow_cmdb/#business-criticality)
+can keep this field in step with it, without overwriting a value somebody set by hand.
 * **User Records** is a numerical estimation of user records in a database (or a system
 that can access that database).
 * **Revenue** is a numerical estimation of annual revenue for the Asset. To calculate Priority, DefectDojo will calculate a percentage by comparing this Asset's revenue to the sum of all Assets within the Organization.
@@ -117,7 +128,7 @@ The Risk calculation itself cannot currently be adjusted directly. However, if [
 ## Priority Insights Dashboard
 
 Users can take an executive-level view of Priority and Risk in their environment using
-the Priority Insights Dashboard (Metrics > Priority Insights in the sidebar)
+the Priority Insights Dashboard (**Overview > Insights > Priority** in the sidebar)
 
 ![image](images/priority_dashboard.png)
 
@@ -151,7 +162,7 @@ DefectDojo Pro's Priority and Risk calculations can be adjusted, allowing you to
 
 ## Prioritization Engines
 
-Similar to SLA configurations, Prioritization Engines allow you to set the rules governing how Priority and Risk are calculated.
+Similar to SLA configurations, Prioritization Engines (**Settings > Finding Workflow > Prioritization Engines** in the sidebar) allow you to set the rules governing how Priority and Risk are calculated.
 
 ![image](images/priority_default.png)
 
@@ -167,10 +178,45 @@ You can tune your Prioritization Engine by adjusting how these factors are appli
 
 Select a factor by clicking the button, and adjust this slider allows you to control the percentage a particular factor is applied.  As you adjust the slider, you'll see the Risk thresholds change as a result.
 
+#### How the multiplier percentages work
+
+Each percentage scales that factor's contribution **relative to its built-in default
+weight**: 100% applies the factor's default influence, 50% halves it, and 200% doubles it.
+The percentage is **not** the factor's share of the final Priority score.  The built-in
+weights deliberately differ in size from factor to factor — exploit evidence carries far
+more weight than any single business-context field, for example — so two factors set to
+the same percentage generally do not contribute equal amounts to the result.
+
+A few more things to know when tuning:
+
+* The factors are not fully independent.  Several factors scale with the Finding's
+  Severity contribution, so lowering the **Severity** multiplier also reduces the effect
+  of those factors — it behaves more like a master volume control than an isolated
+  weight.
+* Setting a factor to 0% removes it from the calculation entirely.
+* The true/false Asset factors (**External Audience**, **Internet Accessible**) only
+  contribute when the corresponding flag is set to True on the Asset.  An Asset that is
+  not Internet Accessible receives no contribution from that factor, at any percentage.
+* Because the percentages are relative multipliers, typing a target distribution directly
+  into the sliders (for example "40% Severity, 30% Exploitability") will not produce that
+  split in the final score.  Tune iteratively instead: adjust a slider, then read the
+  effect off the Priority range table above the sliders.
+* Changing a multiplier moves the highest Priority the engine can produce, and the Risk
+  Score scale moves with it, so the [Risk Thresholds](#risk-thresholds) keep their meaning.
+
+The exact weight each factor carries is intentionally not published.  If you need to map
+an in-house scoring model onto the Prioritization Engine, contact DefectDojo support —
+translating an existing weighting scheme into slider settings is a common request.
+
 #### Finding-Level Multipliers
 
 * **Severity** - a Finding's Severity level
-* **Exploitability** - a Finding's KEV and/or EPSS score
+* **Exploitability** - the exploit evidence available for a Finding: its EPSS score, its
+KEV (Known Exploited Vulnerabilities) status, and — when
+[Threat Intelligence](/asset_modelling/pro_hierarchy/threat_intelligence/) is enabled —
+further evidence such as publicly available exploit code.  The strongest single piece of
+evidence drives this factor, and this one slider scales the combined result; the
+underlying sources (KEV, EPSS, public exploits) cannot be weighted individually.
 * **Endpoints** - the amount of Endpoints associated with a Finding
 
 #### Asset-Level Multipliers
@@ -184,7 +230,29 @@ High)
 
 ### Risk Thresholds
 
-Based on the tuning of the Priority Engine, DefectDojo will automatically recommend Risk Thresholds.  However, these thresholds can be adjusted as well and set to whatever values you deem appropriate.
+Risk Thresholds decide which Risk band a Finding lands in. They are set on the Risk Score scale, from 0 to 100:
+
+| Threshold | Default | A Finding is in this band when its Risk Score is |
+| --- | --- | --- |
+| Low | 10 | at or below the Low threshold |
+| Medium | 47 | above Low, at or below the Medium threshold |
+| Needs Action | 66 | above Medium, at or below the Needs Action threshold |
+| Urgent | | above the Needs Action threshold, up to 100 |
+
+The three thresholds must be in ascending order and below 100.
+
+A few notes on how they behave:
+
+* Because the Risk Score is always relative to the engine's own highest Priority, a threshold keeps its
+  meaning when you change the multipliers. You do not need to revisit the thresholds after tuning a slider.
+* The thresholds are never derived from the Findings or Assets in your instance, so two instances with the
+  same engine settings band Findings the same way.
+* Each threshold is the highest Risk Score that still falls **inside** its band: a Finding at exactly the Low
+  threshold is Low, and a Finding at exactly the Medium threshold is Medium.
+* The API still returns each threshold in Priority units as well (`low_risk_threshold`, `medium_risk_threshold`,
+  `needs_action_risk_threshold`, and `urgent_risk_threshold`, which is the engine's highest Priority). Those
+  values are derived from the Risk Score thresholds. Writing one of the first three sets the matching Risk Score
+  threshold; a written `urgent_risk_threshold` is ignored.
 
 ![image](images/risk_threshold.png)
 
@@ -218,12 +286,30 @@ You can use SLAs as a way to represent your organizations remediation policies. 
 
 * You can sort or filter Finding tables by SLA days.
 * SLA violations can be configured to trigger [Notifications](/admin/notifications/about_notifications/) to DefectDojo users assigned to the related Asset.
-* In **DefectDojo Pro**, SLA performance is also tracked on the [Executive Insights and Remediation](/metrics_reports/pro_metrics/pro__overview/) Metrics Dashboards.
+* In **DefectDojo Pro**, SLA performance is also tracked on the [Executive and Remediation Insights](/metrics_reports/pro_metrics/pro__overview/) dashboards under **Overview > Insights**.
 * SLA compliance can also be surfaced on a custom [dashboard](/metrics_reports/dashboards/custom-dashboards/) in **DefectDojo Pro** — for example with an SLA Burndown or a filtered Count widget.
+
+### How SLA days are counted
+
+Every SLA count in DefectDojo Pro (the SLA column on the Findings and Finding Groups lists, a
+Finding's SLA row, the Within SLA and Outside of SLA counts on the Insights dashboards, the Past SLA
+charts and the dashboard widgets) uses the same calendar and the same rule:
+
+* **Today is your date.** The Pro UI counts from the date in your browser's time zone, so the
+  number of days matches the SLA Expiration Date you see.  The API, notifications and scheduled
+  reports count from the instance's time zone.
+* **A Finding due today is within SLA.** Its SLA column reads **Due Today** with a ✅ green check.
+  It moves outside of SLA the next day, at -1.
+* **The Insights drill-downs split the count exactly.** **Within SLA** opens the active Findings with
+  0 or more SLA days left, and **Outside of SLA** opens those below 0, so every active Finding with
+  an SLA appears in one of the two lists.
+* **A Finding Group shows its fewest SLA days.** While the group has an open Finding, the SLA column
+  counts only its open Findings; once every Finding in it is Mitigated, it shows the fewest days any
+  of them had left when it was closed.
 
 ### Mitigated Within SLA status
 
-If a Finding is successfully Mitigated by the SLA deadline, the Finding will record a ✅ green check mark in the Mitigated Within SLA column.
+If a Finding is successfully Mitigated by the SLA deadline, the Finding will record a ✅ green check mark in the Mitigated Within SLA column.  A Finding Mitigated on the day its SLA expires is within SLA: the date it was Mitigated on is compared with its SLA Expiration Date, in your time zone.
 
 ![image](images/sla_mitigated_within.png)
 
@@ -237,7 +323,7 @@ When an SLA for a given Finding is violated (the Finding is not Closed within th
 
 ## Managing SLA Configurations (Pro)
 
-In DefectDojo Pro, one or more SLA Configurations are managed under the **Configuration > Service Level Agreements** part of the sidebar.  You can create a **New Service Level Agreement** or work with existing SLA configurations from the **All Service Level Agreements** page.
+In DefectDojo Pro, one or more SLA Configurations are managed under **Settings > Finding Workflow > Service Level Agreements** in the sidebar.  You can create a new SLA configuration by selecting **New Service Level Agreement**, or work with existing SLA configurations from that page.
 
 ![image](images/pro_sla_risk.png)
 
@@ -269,8 +355,168 @@ If you have SLA configurations, you can choose which of these is applied to your
 
 Once a new SLA has been selected for an Asset, all of the associated Findings' SLAs will need to be recalculated by DefectDojo.  While this process is running, an Asset's SLA cannot be changed.
 
+### Risk-based SLAs and Risk changes
+
+When an SLA Configuration uses **Risk** as its benchmark, DefectDojo automatically
+recalculates a Finding's SLA deadline whenever the Finding's Risk changes — including
+changes driven by data updates, such as a new KEV listing, an updated EPSS score, or new
+Threat Intelligence evidence.  The remediation window for the new Risk level is applied
+as soon as the Risk is recalculated.
+
+The recalculation changes the *number of days allowed*, not the starting point.  SLAs are
+always measured from the Finding's SLA start date — by default, the date the Finding was
+first detected (see [Notes on SLAs](#notes-on-slas) for the exceptions).  A Risk change
+does not restart the countdown.  A long-open Finding that moves into a stricter Risk band
+can therefore go into breach immediately; this is deliberate, as the time the Finding has
+already been open counts against the tighter deadline.
+
+## Vulnerability response policies
+
+Some frameworks do not let you choose your own remediation windows. They publish a table,
+and a deadline is whatever that table says for the combination of facts that describe the
+finding. FedRAMP is the clearest example: its 2026 rules set a maximum response time for
+every combination of potential agency impact, whether the affected asset is reachable from
+the internet, whether exploitation is credible, and which certification class the service
+holds.
+
+A **response policy** holds one published table as data. It records which standard it came
+from, which version of that standard, when that version took effect, and the vocabulary the
+standard grades impact in. Its rows are the individual cells of the table.
+
+Policies are optional. An SLA configuration with no policy attached behaves exactly as it
+always has, and attaching one is a deliberate choice made per SLA configuration.
+
+### Attaching a policy
+
+A response policy is selected on the SLA configuration, alongside the severity or risk days.
+Two fields matter:
+
+* The **Vulnerability Response Policy** field chooses which published table governs findings
+  under this SLA configuration. Leaving it empty keeps the existing behaviour.
+* The **Authorization Level** field states which authorization or certification level the
+  service holds under that standard. Most published tables give different deadlines to
+  different levels, so a policy produces no deadline at all until this is set. DefectDojo
+  logs a warning when a policy needs a level and none is set.
+
+DefectDojo ships the FedRAMP Vulnerability Detection and Response table for 2026. It is
+seeded on startup and is never attached to anything automatically.
+
+### How a deadline is composed
+
+A response policy tightens a deadline. It never extends one. The remediation date a finding
+ends up with is the earliest of:
+
+* the days allowed for its severity or its risk, from the SLA configuration
+* the CISA KEV due date, when capping by that date is enabled
+* the cell the response policy resolves the finding into
+
+Because every step takes the earliest date, attaching a policy can only bring a deadline
+forward. A finding whose policy cell is more generous than its severity window keeps the
+severity window.
+
+### The three facts a policy grades on
+
+Each finding carries three facts, and each one records where its value came from.
+
+**Adverse impact** is the standard's own rating of what the vulnerability would do to the
+organizations relying on the service. DefectDojo takes it from a value someone set by hand,
+then from a rule, then from the finding's existing impact rating where the policy uses the
+same vocabulary, and finally from a mapping out of severity that is configured on the policy
+itself. Severity is last on purpose. It describes the flaw rather than the consequences, so
+it is a starting point to correct rather than an answer.
+
+**Internet reachability** is whether the affected asset can be reached from outside. This is
+not the same question as reachability analysis, which asks whether vulnerable code can be
+reached inside an application. DefectDojo takes it from a value someone set by hand, then
+from the asset's exposure verdict, then from a configurable tag on the finding.
+
+**Credible exploitability** is whether exploitation is realistic rather than theoretical.
+DefectDojo takes it from a value someone set by hand, then from a CISA KEV listing, then from
+an EPSS score at or above the configured threshold, then from threat intelligence showing a
+weaponized exploit. A proof of concept on its own is not enough.
+
+A value set by hand is never replaced by a later recalculation. The same applies to a value
+set by a rule, because that is an automation the customer configured rather than one
+DefectDojo inferred.
+
+### Facts nobody has established
+
+Reachability can end up unknown. Nothing proves that an asset cannot be reached from the
+internet just because no evidence of exposure was found, so DefectDojo distinguishes "not
+established" from "established as not reachable". Only a person marking an asset as isolated
+settles the question in the negative.
+
+When a fact is unknown, DefectDojo resolves the finding as if it held whichever value the
+policy treats more urgently, and records that it did so. An unmeasured fact can never earn a
+finding more time.
+
+### The evaluation clock
+
+Publishing a deadline is only half of what these frameworks ask for. They also ask that every
+vulnerability be looked at quickly, and that you can show it was. A response policy therefore
+carries an evaluation window as well as a timeframe table, measured in days from the date the
+finding was detected, and different authorization levels usually get different windows.
+
+A finding counts as evaluated once somebody establishes one of the three facts. There is no
+separate confirmation step, because deciding that a finding is internet reachable, or rating its
+adverse impact, is the judgment the framework is asking for. DefectDojo records when that happened
+and, where a person did it rather than a rule, who.
+
+Findings whose window has passed without an evaluation appear in the unevaluated queue. Once a day
+DefectDojo sends one notification per asset listing how many of its findings are overdue. One per
+asset, not one per finding: a window measured in days will sometimes produce hundreds of overdue
+findings at once, and an alert for each would bury the thing it exists to raise. The notification
+goes to the asset's members and its organization's members.
+
+Only open findings are counted. A finding that was closed without ever being evaluated is worth
+knowing about in a report, but it is not something anyone can still act on, and leaving it in a
+daily queue would make the queue permanently dirty.
+
+### Rules can do the routine evaluations
+
+A window measured in days is hard to meet by hand across a large estate, so the rules engine has a
+**Set a vulnerability response fact** action. It sets one of the three facts, records that a rule
+was the source, and stamps the evaluation clock in the same step.
+
+The intended shape is a rule that answers the cases your scanners already have evidence for, so
+that the findings left for a person are the ones that need a judgment. A rule never overwrites a
+value somebody set by hand, and a rule running every night does not keep moving the recorded
+evaluation time on findings it has already seen.
+
+### Escalation
+
+Some frameworks treat a particular combination of facts as an incident rather than as a
+vulnerability, and expect it to be handled as one until it is brought back below that line. The
+condition is part of the policy, so it can differ between standards and between versions of the
+same standard.
+
+DefectDojo flags a finding that meets its policy's escalation condition and lists it in a separate
+queue. The flag clears on its own when the finding stops meeting the condition, which usually means
+its impact has been mitigated down a level. The record that it was escalated, and when, is kept
+after the flag clears, because the fact that it happened is part of what a reviewer asks about.
+
+There is no separate incident record to manage. A flag and a filtered view are what the frameworks
+actually require, and the process that follows an escalation already lives in whatever incident
+tooling you use.
+
+### Versions
+
+A new release of a standard arrives as a new policy rather than as an edit to the one already
+in use. Findings judged under an earlier release keep the version that produced their
+deadline, so an assessor can still be shown which published table a given date came from.
+Seeding never overwrites a policy that already exists, so any changes made to a shipped
+policy survive upgrades.
+
+Editing a policy, or any of its cells, recalculates the findings it governs, in the same way
+that changing the days on an SLA configuration does.
+
+The FedRAMP table DefectDojo ships reflects one published version of that standard. Confirm
+which version applies to your own authorization before relying on it, and note that the table
+publishes no deadline for the lowest impact rating, so findings at that rating keep their
+severity or risk window.
+
 ## Notes on SLAs
 
 * SLAs can be optionally restarted once a [Risk Accepted](/triage_findings/findings_workflows/pro__risk_acceptance/) Finding reactivates.  This is set when creating the Risk Acceptance by setting the **Restart SLA Expired** field.
 * Reimporting a Finding does not restart the SLA - SLAs are always calculated from when a Finding was first detected unless **Restart SLA on Finding Reactivation** is enabled.
-* Risk Acceptance expiry or reactivation of a Closed Finding are the only ways to reset or recalculate an SLA for a Finding once it is created (without changing the Asset's SLA configuration).
+* Risk Acceptance expiry or reactivation of a Closed Finding are the only ways to reset the SLA start date for a Finding once it is created (without changing the Asset's SLA configuration).  Note that with a Risk-based SLA Configuration, a Finding's *deadline* can still change when its Risk changes — see [Risk-based SLAs and Risk changes](#risk-based-slas-and-risk-changes) — but the start date the countdown is measured from stays the same.

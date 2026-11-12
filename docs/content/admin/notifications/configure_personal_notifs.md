@@ -4,6 +4,8 @@ description: "Configure notifications for a personal account"
 aliases:
   - /en/customize_dojo/notifications/configure_personal_notifs
 ---
+
+<span style="background-color:rgba(242, 86, 29, 0.3)">Note: In DefectDojo Pro, notification settings live in the Pro UI as three separate pages rather than one page with a Scope drop-down: **Settings \> Notifications \> Personal Notifications**, **System Notifications** and **Notification Template**. System Notifications and the Notification Template are visible to superusers only. Notification Webhooks moved alongside them, under **Settings \> Notifications \> Notification Webhooks**.</span>
 ## Configure Personal notifications
 
 Personal Notifications are sent in addition to System\-Wide Notifications, and will apply to any Asset, Organization or other data type that you have access to. Personal Notification preferences only apply to a single user, and can only be set on the account which is configuring them.
@@ -12,12 +14,16 @@ Personal Notifications are sent in addition to System\-Wide Notifications, and w
 
 System notifications are set by a DefectDojo Superuser and cannot be opted out of by an individual user.
 
-1. Start from the Notifications page (⚙️**Configuration \> Notifications** in the sidebar).
+1. Start from the Notifications page (**Settings > Notifications > Personal Notifications** in the Pro UI, or ⚙️**Configuration \> Notifications** in the Classic UI).
 2. From the **Scope** drop down menu, you can select which set of notifications you wish to edit.
 3. Select Personal Notifications.
 4. Check the notification method which you wish to use for each type of notification. You can select more than one.
 
 Personal Notifications cannot be sent via Microsoft Teams, as Teams only allows for posting Global notifications in a single channel.
+
+### Receive new Findings that match a set of filters (Pro)
+
+To be told about new Findings that match particular filters rather than every event of a kind, adopt the **Alert on new findings that match a set of filters** template in the Triage Engine: it sends an in-app alert about the matching new Findings. See [Starting a rule](/automation/triage_engine/building_rules/#starting-a-rule).
 
 ### Receive Personal notifications for a specific Asset
 

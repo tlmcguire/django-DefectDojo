@@ -9,9 +9,10 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.functional import cached_property
 from django.utils.translation import gettext as _
-from tagulous.models import TagField
+from django_tagulous.models import TagField
 
-from dojo.base_models.base import BaseModel
+from dojo.base_models.base import BaseManager, BaseModel
+from dojo.query_hooks import HookedBaseManager, HookedManager, UnfilteredManager
 
 
 class Product_Line(models.Model):
@@ -99,9 +100,15 @@ class Product(BaseModel):
 
     # Metadata
     business_criticality = models.CharField(max_length=9, choices=BUSINESS_CRITICALITY_CHOICES, blank=True, null=True)
-    platform = models.CharField(max_length=11, choices=PLATFORM_CHOICES, blank=True, null=True)
-    lifecycle = models.CharField(max_length=12, choices=LIFECYCLE_CHOICES, blank=True, null=True)
-    origin = models.CharField(max_length=19, choices=ORIGIN_CHOICES, blank=True, null=True)
+    # platform/lifecycle/origin are customer-editable lookup tables (see
+    # dojo.product_attributes). The choice constants above are retained as the seed
+    # defaults and canonical machine values; the labels now live on the option rows.
+    platform = models.ForeignKey("dojo.Product_Platform", null=True, blank=True,
+                                 on_delete=models.RESTRICT, related_name="products")
+    lifecycle = models.ForeignKey("dojo.Product_Lifecycle", null=True, blank=True,
+                                  on_delete=models.RESTRICT, related_name="products")
+    origin = models.ForeignKey("dojo.Product_Origin", null=True, blank=True,
+                               on_delete=models.RESTRICT, related_name="products")
     user_records = models.PositiveIntegerField(blank=True, null=True, help_text=_("Estimate the number of user records within the application."))
     revenue = models.DecimalField(max_digits=15, decimal_places=2, blank=True, null=True, validators=[MinValueValidator(Decimal("0.00"))], help_text=_("Estimate the application's revenue."))
     external_audience = models.BooleanField(default=False, help_text=_("Specify if the application is used by people outside the organization."))
@@ -125,9 +132,18 @@ class Product(BaseModel):
     async_updating = models.BooleanField(default=False,
                                             help_text=_("Findings under this Product or SLA configuration are asynchronously being updated"))
 
+    # Read and written only by plugins; open source never sets them.
+    archived_at = models.DateTimeField(null=True, blank=True, editable=False)
+    archive_batch = models.UUIDField(null=True, blank=True, editable=False)
+
+    # objects is declared first, so it is the default manager; see dojo.query_hooks.
+    objects = HookedBaseManager()
+    unfiltered = BaseManager()
+
     class Meta:
         ordering = ("name",)
         indexes = [
+            models.Index(fields=["archive_batch"], condition=models.Q(archive_batch__isnull=False), name="dojo_product_archive_batch"),
             # Serves the case-insensitive product-name lookup
             # (WHERE UPPER(name) = UPPER(%s)) used when filtering findings by
             # product name; the plain unique btree on name can't (Sentry DJANGO-D2M).
@@ -300,6 +316,14 @@ class Product_API_Scan_Configuration(models.Model):
     service_key_1 = models.CharField(max_length=200, null=True, blank=True)
     service_key_2 = models.CharField(max_length=200, null=True, blank=True)
     service_key_3 = models.CharField(max_length=200, null=True, blank=True)
+
+    # Read and written only by plugins; open source never sets them.
+    archived_at = models.DateTimeField(null=True, blank=True, editable=False)
+    archive_batch = models.UUIDField(null=True, blank=True, editable=False)
+
+    # objects is declared first, so it is the default manager; see dojo.query_hooks.
+    objects = HookedManager()
+    unfiltered = UnfilteredManager()
 
     def __str__(self):
         name = self.tool_configuration.name

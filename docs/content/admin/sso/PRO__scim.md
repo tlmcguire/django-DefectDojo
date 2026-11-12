@@ -1,7 +1,7 @@
 ---
 title: "SCIM Provisioning"
 description: "Provision and deprovision DefectDojo Pro users from your identity provider"
-weight: 19
+weight: 140
 audience: pro
 ---
 
@@ -10,6 +10,8 @@ DefectDojo Pro supports SCIM 2.0, which lets your identity provider create, upda
 SCIM is separate from single sign-on and complements it. SSO decides who may sign in; SCIM keeps the account list itself in step with your directory. Most customers configure both: SAML or OIDC for authentication, SCIM for provisioning.
 
 SCIM configuration can only be performed by a **Superuser**.
+
+SCIM and single sign-on come with every DefectDojo Pro license, cloud or self-hosted; neither depends on a license tier.
 
 ## What SCIM does in DefectDojo
 
@@ -26,7 +28,7 @@ The user record itself is kept. Findings, notes and history reference the people
 
 ## Setup
 
-1. Open **Connect > Authorization** and select **SCIM Provisioning**. SCIM is listed alongside your login providers because it connects to the same identity provider, and is tagged **Provisioning** to distinguish it from the providers that put a button on the login page.
+1. Open **Connect > Authorization > Providers** and select **SCIM Provisioning**. SCIM is listed alongside your login providers because it connects to the same identity provider, and is tagged **Provisioning** to distinguish it from the providers that put a button on the login page.
 
 2. Check **Enable SCIM Provisioning** and submit. While this is off, the SCIM endpoints behave as though they do not exist, so a connection test from your identity provider reports the address as not found.
 
@@ -35,6 +37,8 @@ The user record itself is kept. Findings, notes and history reference the people
    ```
    https://<your-instance>.cloud.defectdojo.com/scim/v2
    ```
+
+   On a self-hosted instance it is `https://<your-hostname>/scim/v2`.
 
 4. In the **SCIM Tokens** panel, give the token a name that says where it will be used, for example "Okta production", then select **Generate Token**.
 
@@ -78,6 +82,16 @@ To push groups as well, open the **Push Groups** tab and add the groups you want
 
 Entra provisions on a cycle of roughly 40 minutes. While you are setting things up, **Provision on demand** applies a single user or group immediately, which makes it much faster to confirm the configuration works.
 
+## Other SCIM 2.0 providers
+
+DefectDojo implements the SCIM 2.0 protocol rather than any one provider's variant of it, so any identity governance or provisioning tool that speaks standard SCIM 2.0 (for example SailPoint) can provision DefectDojo. Okta and Entra ID are the two with step-by-step instructions above. For another provider, configure a generic SCIM 2.0 connection with:
+
+* **Base URL:** the Tenant URL from the setup steps above.
+* **Authentication:** an HTTP bearer token, the SCIM token you generated. The provider must send it as `Authorization: Bearer <token>`.
+* **Users and Groups** as the resource types, with `userName` as the attribute used to match accounts.
+
+Then check the provider against the [Limitations](#limitations) below. In particular, DefectDojo accepts only a single equality comparison in a filter, and does not implement bulk operations or sorting. A provider that needs one of those for its default configuration has to be set to do without it. The **Last Used** column in the SCIM Tokens panel and **Connect > Diagnostics** show whether its requests arrive and why any were refused.
+
 ## What DefectDojo stores
 
 DefectDojo maps a small set of SCIM attributes and ignores the rest.
@@ -119,7 +133,7 @@ Deleting a group through SCIM removes the group and its memberships. It never de
 
 By default, SCIM will not deactivate a superuser account. The common failure in any provisioning setup is an identity provider scoped more broadly than intended, and superusers are how you get back into DefectDojo when something goes wrong.
 
-If you want your identity provider to manage superusers as well, enable **Allow SCIM to deactivate superusers** on the SCIM settings page. Even then, DefectDojo refuses to deactivate the last remaining active superuser, so provisioning cannot leave the instance without an administrator.
+If you want your identity provider to manage superusers as well, enable **Allow SCIM to Deactivate Superusers** on the SCIM settings page. Even then, DefectDojo refuses to deactivate the last remaining active superuser, so provisioning cannot leave the instance without an administrator.
 
 ## Limitations
 
@@ -130,7 +144,7 @@ If you want your identity provider to manage superusers as well, enable **Allow 
 
 ## Troubleshooting
 
-**The connection test reports "not found".** SCIM is switched off, or the instance is not licensed for it. Check that **Enable SCIM Provisioning** is on and that your subscription includes SSO. The whole SCIM address behaves as though it does not exist until both are true.
+**The connection test reports "not found".** SCIM is switched off. Check that **Enable SCIM Provisioning** is on and saved. Until it is, the whole SCIM address behaves as though it does not exist.
 
 **The connection test reports an authentication failure.** The token is wrong, or it has been revoked. Generate a new one and update your identity provider. In Okta, check that the value begins with `Bearer ` and a space; in Entra, check that it does not.
 

@@ -88,7 +88,14 @@ class LocationData:
         artifact_hashes: dict[str, list[str]] | None = None,
         license_expression: str = "",
         file_path: str = "",
+        component_type: str = "",
     ) -> LocationData:
+        """
+        A software component. ``component_type`` is the CycloneDX ``component.type``
+        (library, application, machine-learning-model, ...) when the report says;
+        empty means unknown, which a consumer reads as library. It describes the
+        component, it is not part of its identity (the purl is).
+        """
         return cls(
             type="dependency",
             data={
@@ -102,8 +109,180 @@ class LocationData:
                 "artifact_hashes": artifact_hashes or {},
                 "license_expression": license_expression,
                 "file_path": file_path,
+                "component_type": component_type,
             },
         )
+
+    @classmethod
+    def host(
+        cls,
+        *,
+        hostname: str,
+        os_family: str = "",
+        os_version: str = "",
+        kernel: str = "",
+        architecture: str = "",
+    ) -> LocationData:
+        """
+        A machine identified by its name: the system name, NetBIOS name or DNS name a
+        scanner reports, stored exactly as reported. Identity is the hostname alone; the
+        other keys describe the machine and are not part of its identity. Report a host's
+        IP addresses as ``url`` locations alongside this one, not in ``hostname``.
+        """
+        return cls(
+            type="host",
+            data={
+                "hostname": hostname,
+                "os_family": os_family,
+                "os_version": os_version,
+                "kernel": kernel,
+                "architecture": architecture,
+            },
+        )
+
+    @classmethod
+    def domain(
+        cls,
+        *,
+        fqdn: str,
+        apex: str = "",
+    ) -> LocationData:
+        """
+        A DNS name: a subdomain, an apex domain or a wildcard name such as ``*.example.com``.
+        Report it as the scanner or certificate gives it; the consumer lowercases it, drops a
+        trailing dot and converts an internationalized name to its ASCII form, so identity is
+        that normalized name. ``apex`` is the registrable domain the name sits under when the
+        tool knows it, and describes the name rather than identifying it.
+
+        DefectDojo Pro stores domain, ip and cert locations; Community Edition does not register
+        these types and drops them, as it does container images.
+
+        A DNS name is not a host. A machine known by its name is ``host``; a name a
+        recon tool resolved or a certificate covers is ``domain``. Never pass an IP address here.
+        """
+        return cls(type="domain", data={"fqdn": fqdn, "apex": apex})
+
+    @classmethod
+    def ip(
+        cls,
+        *,
+        address: str,
+        asn: int | None = None,
+        asn_organization: str = "",
+        network: str = "",
+        provider: str = "",
+    ) -> LocationData:
+        """
+        An IP address, IPv4 or IPv6, with no port or scheme. Identity is the canonical
+        address, so ``2001:DB8::1`` and ``2001:db8:0:0::1`` are one location. The other keys
+        describe the address when the tool knows them: the announcing ``asn`` and its
+        ``asn_organization``, the registry ``network`` it sits in as CIDR, and the cloud or CDN
+        ``provider`` that serves it. An ``asn`` outside 1 to 4294967295 is stored as unknown. A web
+        service on the address stays a ``url`` location.
+        """
+        return cls(
+            type="ip",
+            data={
+                "address": address,
+                "asn": asn,
+                "asn_organization": asn_organization,
+                "network": network,
+                "provider": provider,
+            },
+        )
+
+    @classmethod
+    def cert(
+        cls,
+        *,
+        sha256: str,
+        subject_cn: str = "",
+        issuer: str = "",
+        serial_number: str = "",
+        not_before: str = "",
+        not_after: str = "",
+        sans: list[str] | str | None = None,
+    ) -> LocationData:
+        """
+        An X.509 certificate, identified by the SHA-256 fingerprint of its DER encoding,
+        written as hex with or without colons. The other keys describe the certificate:
+        the subject common name, the issuer, the serial number, the validity window as
+        ISO 8601 timestamps (read as UTC when they carry no offset; a time that cannot be
+        read is stored as unknown) and the subject alternative names, a list of names or a
+        single name. Report the names a certificate covers as ``domain`` locations too when
+        they matter on their own.
+        """
+        return cls(
+            type="cert",
+            data={
+                "sha256": sha256,
+                "subject_cn": subject_cn,
+                "issuer": issuer,
+                "serial_number": serial_number,
+                "not_before": not_before,
+                "not_after": not_after,
+                # One name passed as a string is one name, not a list of its characters.
+                "sans": [sans] if isinstance(sans, str) else list(sans or []),
+            },
+        )
+
+    @classmethod
+    def image(
+        cls,
+        *,
+        registry: str = "",
+        repository: str = "",
+        digest: str = "",
+        tag: str = "",
+        oci_source: str = "",
+        oci_revision: str = "",
+    ) -> LocationData:
+        """
+        A container image a finding was found in. Exactly these six keys, always
+        present, so every consumer reads one shape: ``registry`` and ``repository``
+        as reported (the consumer normalises Docker Hub aliases and the ``library/``
+        prefix), ``digest`` as ``sha256:<64 hex>`` when the scanner knows it, ``tag``
+        as reported, and the ``org.opencontainers.image.source`` / ``.revision``
+        labels when the tool exposes image labels. Identity is the digest when
+        present, else registry/repository:tag; an image with neither digest nor
+        tag is still a valid location for its repository.
+        """
+        return cls(
+            type="image",
+            data={
+                "registry": registry,
+                "repository": repository,
+                "digest": digest,
+                "tag": tag,
+                "oci_source": oci_source,
+                "oci_revision": oci_revision,
+            },
+        )
+
+
+def split_image_reference(reference: str) -> dict[str, str]:
+    """
+    Split ``[registry/]repository[:tag][@digest]`` into its raw parts without
+    normalising them. The first path segment is a registry only when it contains a
+    dot or a colon or is ``localhost``; ``nginx:1.25`` therefore has no registry and
+    the consumer decides what the default registry is. Returns empty strings for the
+    parts that are absent, and an empty dict for an empty reference.
+    """
+    text = (reference or "").strip()
+    if not text:
+        return {}
+    digest = ""
+    if "@" in text:
+        text, _, digest = text.partition("@")
+    registry = ""
+    first, sep, rest = text.partition("/")
+    if sep and ("." in first or ":" in first or first == "localhost"):
+        registry, text = first, rest
+    tag = ""
+    last_segment = text.rsplit("/", 1)[-1]
+    if ":" in last_segment:
+        text, _, tag = text.rpartition(":")
+    return {"registry": registry, "repository": text, "tag": tag, "digest": digest}
 
 
 @dataclass(frozen=True)

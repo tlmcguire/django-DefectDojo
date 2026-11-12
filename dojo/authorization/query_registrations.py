@@ -16,7 +16,7 @@ from crum import get_current_user
 from django.db.models import Q
 
 from dojo.authorization.query_filters import register_auth_filter
-from dojo.authorization.roles_permissions import permission_to_action
+from dojo.authorization.roles_permissions import Action, permission_to_action
 from dojo.location.models import Location, LocationFindingReference, LocationProductReference
 from dojo.models import (
     App_Analysis,
@@ -60,6 +60,15 @@ def _is_unrestricted(user, action):
     if user.is_superuser:
         return True
     return bool(user.is_staff)
+
+
+def _requires_staff(action):
+    """
+    Actions ``user_has_permission`` gates on is_staff rather than on
+    membership. Only reached after the superuser/staff bypass above, so
+    membership must not scope a queryset for these.
+    """
+    return action in {Action.Delete, Action.StaffOnly, Action.SuperuserOnly}
 
 
 def _authorized_product_ids(user):
@@ -126,6 +135,8 @@ def _filter_by_authorized_products(queryset, product_path, permission, user=None
     action = permission_to_action(permission)
     if _is_unrestricted(user, action):
         return queryset
+    if _requires_staff(action):
+        return queryset.none()
     return queryset.filter(**{f"{product_path}__id__in": _authorized_product_ids(user)})
 
 
@@ -138,8 +149,11 @@ def _get_authorized_products(permission, user=None):
     user = _resolve_user(user)
     if user is None or getattr(user, "is_anonymous", False):
         return Product.objects.none()
-    if _is_unrestricted(user, permission_to_action(permission)):
+    action = permission_to_action(permission)
+    if _is_unrestricted(user, action):
         return Product.objects.all().order_by("name")
+    if _requires_staff(action):
+        return Product.objects.none()
     return Product.objects.filter(
         Q(authorized_users=user) | Q(prod_type__authorized_users=user),
     ).distinct().order_by("name")
@@ -267,14 +281,14 @@ def _get_authorized_jira_projects(permission, user=None):
     if user is None or getattr(user, "is_anonymous", False):
         return JIRA_Project.objects.none()
     if _is_unrestricted(user, permission_to_action(permission)):
-        return JIRA_Project.objects.all()
+        return JIRA_Project.objects.all().order_by("id")
     authorized_products = _authorized_product_ids(user)
     authorized_product_types = _authorized_product_type_ids(user)
     return JIRA_Project.objects.filter(
         Q(product__id__in=authorized_products)
         | Q(product__prod_type__id__in=authorized_product_types)
         | Q(engagement__product__id__in=authorized_products),
-    ).distinct()
+    ).distinct().order_by("id")
 
 
 register_auth_filter("jira_link.get_authorized_jira_projects", _get_authorized_jira_projects)
@@ -285,13 +299,13 @@ def _get_authorized_jira_issues(permission):
     if user is None or getattr(user, "is_anonymous", False):
         return JIRA_Issue.objects.none()
     if _is_unrestricted(user, permission_to_action(permission)):
-        return JIRA_Issue.objects.all()
+        return JIRA_Issue.objects.all().order_by("id")
     authorized_products = _authorized_product_ids(user)
     return JIRA_Issue.objects.filter(
         Q(engagement__product__id__in=authorized_products)
         | Q(finding__test__engagement__product__id__in=authorized_products)
         | Q(finding_group__test__engagement__product__id__in=authorized_products),
-    )
+    ).order_by("id")
 
 
 register_auth_filter("jira_link.get_authorized_jira_issues", _get_authorized_jira_issues)
@@ -314,8 +328,11 @@ def _get_authorized_locations(permission, queryset=None, user=None):
     qs = queryset if queryset is not None else Location.objects.all()
     if user is None or getattr(user, "is_anonymous", False):
         return qs.none()
-    if _is_unrestricted(user, permission_to_action(permission)):
+    action = permission_to_action(permission)
+    if _is_unrestricted(user, action):
         return qs
+    if _requires_staff(action):
+        return qs.none()
     authorized_products = _authorized_product_ids(user)
     return qs.filter(products__product__id__in=authorized_products).distinct()
 
@@ -396,8 +413,11 @@ def _get_authorized_findings(permission, queryset=None, user=None):
     qs = queryset if queryset is not None else Finding.objects.all()
     if user is None or getattr(user, "is_anonymous", False):
         return qs.none()
-    if _is_unrestricted(user, permission_to_action(permission)):
+    action = permission_to_action(permission)
+    if _is_unrestricted(user, action):
         return qs
+    if _requires_staff(action):
+        return qs.none()
     return qs.filter(test__engagement__product__id__in=_authorized_product_ids(user))
 
 
@@ -457,13 +477,14 @@ register_auth_filter("user.get_authorized_users", _get_authorized_users)
 
 
 def _get_authorized_users_for_product_type(users, product_type, permission):
+    """
+    Narrow ``users`` to the ones authorized on ``product_type``.
+
+    The result describes the candidate users, not the caller: it is used to pick
+    notification recipients and lead/reviewer choices, so it is the same whoever asks.
+    """
     if users is None:
         users = Dojo_User.objects.all()
-    user = get_current_user()
-    if user is None or getattr(user, "is_anonymous", False):
-        return users.none()
-    if _is_unrestricted(user, permission_to_action(permission)) or user.is_staff:
-        return users
     if product_type is None:
         return users.none()
     # OS: users authorized on this product type via authorized_users, plus
@@ -478,21 +499,18 @@ register_auth_filter("user.get_authorized_users_for_product_type", _get_authoriz
 
 
 def _get_authorized_users_for_product_and_product_type(users, product, permission):
+    """Narrow ``users`` to the ones authorized on ``product`` (see ``_get_authorized_users_for_product_type``)."""
     if users is None:
         users = Dojo_User.objects.all()
-    user = get_current_user()
-    if user is None or getattr(user, "is_anonymous", False):
-        return users.none()
-    if _is_unrestricted(user, permission_to_action(permission)) or user.is_staff:
-        return users
     if product is None:
         return users.none()
     # OS: users authorized on this product via authorized_users (directly on
     # the product or via its product type), plus superusers (2.58.4 always
-    # surfaced is_superuser users as candidates).
+    # surfaced is_superuser users as candidates). Subqueries keep the caller's
+    # annotations intact, and prod_type_id avoids loading the product type.
     return users.filter(
-        Q(id__in=product.authorized_users.values("id"))
-        | Q(id__in=product.prod_type.authorized_users.values("id"))
+        Q(id__in=Dojo_User.objects.filter(authorized_products=product).values("id"))
+        | Q(id__in=Dojo_User.objects.filter(authorized_product_types=product.prod_type_id).values("id"))
         | Q(is_superuser=True),
     )
 

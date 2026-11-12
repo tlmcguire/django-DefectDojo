@@ -10,11 +10,11 @@
             <div class="panel panel-default">
                 <div class="panel-heading tight">
                     <h3 class="has-filters">
-                        {% trans "Tool Types" %}
+                        <i class="fa-solid fa-screwdriver-wrench dd-card-icon" aria-hidden="true"></i>{% trans "Tool Types" %}
                         {% if "dojo.add_tool_type"|has_configuration_permission:request %}
                         <div class="dropdown pull-right">
                             <button class="btn btn-primary dropdown-toggle" type="button" id="dropdownMenu1"
-                                    data-toggle="dropdown" aria-expanded="true" aria-label="Tool type options">
+                                    data-toggle="dropdown" aria-expanded="true" aria-label="{% trans 'Tool type options' %}">
                                 <span class="fa-solid fa-screwdriver-wrench"></span>
                                 <span class="caret"></span>
                             </button>

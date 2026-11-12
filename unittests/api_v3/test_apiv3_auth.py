@@ -1,0 +1,86 @@
+"""Auth contract tests for API v3 (D8 / §4.2): token AND session+CSRF, both on the same endpoint."""
+from __future__ import annotations
+
+from datetime import timedelta
+
+from django.test import override_settings
+from django.utils import timezone
+from rest_framework.authtoken.models import Token
+
+from dojo.models import UserContactInfo
+
+from .base import ApiV3TestCase
+
+
+class TestApiV3Auth(ApiV3TestCase):
+
+    def test_token_auth_get(self):
+        """A v2 token authenticates a v3 GET (same token store)."""
+        response = self.token_client().get(self.v3_url("findings"))
+        self.assertEqual(200, response.status_code, response.content[:500])
+        self.assertEqual("alpha", response["X-API-Status"])
+
+    def test_session_auth_get(self):
+        """Django session authenticates a v3 GET (safe method needs no CSRF)."""
+        response = self.session_client().get(self.v3_url("findings"))
+        self.assertEqual(200, response.status_code, response.content[:500])
+
+    def test_anonymous_is_401_problem_json(self):
+        """No credentials -> 401 problem+json (not 403, not a redirect)."""
+        response = self.anonymous_client().get(self.v3_url("findings"))
+        self.assertEqual(401, response.status_code, response.content[:500])
+        self.assertEqual("application/problem+json", response["Content-Type"])
+        body = response.json()
+        self.assertEqual(401, body["status"])
+        self.assertIn("type", body)
+        self.assertIn("title", body)
+
+    def test_both_auth_modes_on_same_endpoint(self):
+        """The same endpoint accepts both token and session auth."""
+        self.assertEqual(200, self.token_client().get(self.v3_url("findings")).status_code)
+        self.assertEqual(200, self.session_client().get(self.v3_url("findings")).status_code)
+
+    def test_token_bypasses_csrf_on_unsafe_method(self):
+        """Header (token) auth needs no CSRF: an unsafe POST reaches the handler (400, not 401/403)."""
+        response = self.token_client().post(
+            self.v3_url("import"), {"scan_type": "ZAP Scan", "mode": "import"}, format="multipart",
+        )
+        self.assertNotIn(response.status_code, (401, 403), response.content[:500])
+        self.assertEqual(400, response.status_code, response.content[:500])
+
+    def test_session_csrf_enforced_on_unsafe_method(self):
+        """Cookie (session) auth on an unsafe method without a CSRF token -> 403."""
+        client = self.session_client(enforce_csrf=True)
+        response = client.post(
+            self.v3_url("import"), {"scan_type": "ZAP Scan", "mode": "import"}, format="multipart",
+        )
+        self.assertEqual(403, response.status_code, response.content[:500])
+
+    def test_expired_token_is_401(self):
+        """A token past its per-user expiry is refused, as on v2."""
+        uci, _ = UserContactInfo.objects.get_or_create(user=self.admin)
+        uci.token_expiry = timezone.now() - timedelta(days=1)
+        uci.save(update_fields=["token_expiry"])
+        response = self.token_client().get(self.v3_url("findings"))
+        self.assertEqual(401, response.status_code, response.content[:500])
+
+    @override_settings(API_TOKEN_DEFAULT_EXPIRY_DAYS=1)
+    def test_token_older_than_default_expiry_is_401(self):
+        """A token older than the instance-wide lifetime is refused, as on v2."""
+        Token.objects.filter(pk=self.token.pk).update(created=timezone.now() - timedelta(days=2))
+        response = self.token_client().get(self.v3_url("findings"))
+        self.assertEqual(401, response.status_code, response.content[:500])
+
+    @override_settings(API_TOKENS_ENABLED=False)
+    def test_token_is_401_when_api_tokens_disabled(self):
+        """With API tokens disabled, v3 refuses tokens as v2 does; session auth still works."""
+        self.assertEqual(401, self.token_client().get(self.v3_url("findings")).status_code)
+        self.assertEqual(200, self.session_client().get(self.v3_url("findings")).status_code)
+
+    def test_token_is_401_while_a_forced_password_reset_is_pending(self):
+        """A token is refused while its owner owes a forced password reset, as on v2."""
+        uci, _ = UserContactInfo.objects.get_or_create(user=self.admin)
+        uci.force_password_reset = True
+        uci.save(update_fields=["force_password_reset"])
+        response = self.token_client().get(self.v3_url("findings"))
+        self.assertEqual(401, response.status_code, response.content[:500])

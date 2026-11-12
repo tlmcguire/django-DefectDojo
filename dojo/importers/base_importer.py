@@ -1,21 +1,43 @@
 import base64
+import binascii
 import logging
+import re
 import time
+from contextlib import contextmanager
+from functools import wraps
+from itertools import batched
+from pathlib import Path
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import TemporaryUploadedFile
-from django.db import DEFAULT_DB_ALIAS, DatabaseError, IntegrityError, connections, transaction
+from django.db import (
+    DEFAULT_DB_ALIAS,
+    DatabaseError,
+    IntegrityError,
+    OperationalError,
+    connections,
+    router,
+    transaction,
+)
+from django.db.models import Q
+from django.db.models.signals import m2m_changed, post_save, pre_save
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.timezone import make_aware
 
 import dojo.finding.helper as finding_helper
 import dojo.risk_acceptance.helper as ra_helper
+from dojo.celery_dispatch import dojo_dispatch_task
+from dojo.db_utils import is_foreign_key_conflict, is_transient_db_conflict
 from dojo.finding.cwe import finding_cwe_labels
+from dojo.importers.import_lock import lock_tests_under_import, unlock_tests_under_import
 from dojo.importers.options import ImporterOptions
+from dojo.jira import services as jira_services
 from dojo.jira.services import is_keep_in_sync
-from dojo.location.models import Location
+from dojo.location.feature import locations_enabled
+from dojo.location.models import Location, LocationFindingReference
 from dojo.models import (
     DEDUPLICATION_EXECUTION_MODE_ASYNC_WAIT,
     DEDUPLICATION_EXECUTION_MODE_SYNC,
@@ -28,23 +50,101 @@ from dojo.models import (
     SEVERITIES,
     BurpRawRequestResponse,
     Endpoint,
+    Endpoint_Status,
     Engagement,
     FileUpload,
     Finding,
     Finding_CWE,
+    Notes,
+    System_Settings,
     Test,
     Test_Import,
     Test_Import_Finding_Action,
     Test_Type,
 )
-from dojo.notifications.helper import create_notification
+from dojo.notifications.helper import async_create_notification
 from dojo.tags.utils import bulk_add_tags_to_instances
+from dojo.tools import tool_issue_updater
 from dojo.tools.factory import get_parser
 from dojo.tools.parser_test import ParserTest
+from dojo.tools.utils import drop_ambiguous_repeated_unique_ids
 from dojo.utils import max_safe
 from dojo.vulnerability.manager import VulnerabilityIdManager
 
 logger = logging.getLogger(__name__)
+
+
+def deleted_target_message(instance) -> str:
+    return (
+        f"The {instance._meta.verbose_name} this scan was being imported into "
+        f"(id {instance.pk}) was deleted while the scan was being processed, so "
+        f"the import could not be completed. Nothing was imported. Re-run the "
+        f"import against a {instance._meta.verbose_name} that still exists."
+    )
+
+
+# PostgreSQL's DETAIL for a foreign-key violation on insert/update names the missing row.
+_MISSING_REFERENCED_ROW = re.compile(
+    r'Key \((?P<column>[^)]+)\)=\((?P<value>[^)]*)\) is not present in table "(?P<table>[^"]+)"',
+)
+
+
+def _missing_referenced_row(exception):
+    """Return (table, key) of the row a foreign-key violation says is missing, or None."""
+    detail = getattr(getattr(exception.__cause__, "diag", None), "message_detail", None) or str(exception)
+    match = _MISSING_REFERENCED_ROW.search(detail)
+    return (match["table"], match["value"]) if match else None
+
+
+def findings_deleted_message(test) -> str:
+    return (
+        f"Findings this scan was writing were deleted while the scan was being processed (for "
+        f"example because test {test.pk}, or its engagement or product, is being deleted), so the "
+        f"import could not be completed. Re-run the import once the delete has finished."
+    )
+
+
+def reports_a_deleted_target(process_scan):
+    """
+    Turn the foreign-key failure an import hits when its test is deleted mid-run into a clear error.
+
+    An import writes a batch's child rows (endpoint or location statuses, tags, vulnerability ids,
+    finding groups) well after it created or matched the findings they belong to. A delete in
+    between -- of the test by a user, cascading from its engagement or product, or the API's
+    asynchronous delete, which removes a test's findings in chunks and the test row last -- removes
+    those findings, and the next of those writes fails on its foreign key with a PostgreSQL
+    constraint name that says nothing about why. The import cannot complete: report that, the way
+    save_without_resurrecting does for the test itself.
+
+    Only a violation naming a finding or test that no longer exists is translated; one naming a row
+    that is still there is a genuine bug and is re-raised unchanged. Only the failure path pays for
+    the existence check.
+    """
+
+    @wraps(process_scan)
+    def wrapper(self, *args, **kwargs):
+        try:
+            with self.import_lock_scope():
+                return process_scan(self, *args, **kwargs)
+        except IntegrityError as exception:
+            test = getattr(self, "test", None)
+            missing = _missing_referenced_row(exception) if is_foreign_key_conflict(exception) else None
+            models_by_table = {Finding._meta.db_table: Finding, Test._meta.db_table: Test}
+            if test is None or test.pk is None or missing is None or missing[0] not in models_by_table:
+                raise
+            try:
+                referenced_row_exists = models_by_table[missing[0]].objects.filter(pk=missing[1]).exists()
+                test_exists = Test.objects.filter(pk=test.pk).exists()
+            except DatabaseError:
+                # An aborted enclosing transaction cannot answer; the original error is the report.
+                raise exception from None
+            if referenced_row_exists:
+                raise
+            message = findings_deleted_message(test) if test_exists else deleted_target_message(test)
+            raise ValidationError(message) from exception
+
+    return wrapper
+
 
 # Number of times update_test_tags() re-runs Test.tags.set() when it loses a race against
 # tagulous' cleanup of unused tag rows (see set_test_tags_safe for the full explanation).
@@ -67,6 +167,30 @@ class Parser:
         TODO This should be enforced in the future, but here is not the place
         TODO once this enforced, this stub class should be removed
         """
+
+
+def _lock_test_tag_rows(test, tag_names):
+    """
+    Lock, in ascending id order, every tag row ``test.tags.set(tag_names)`` is about to update.
+
+    That is the test's current tags (whose counts go down) and the existing tags among
+    ``tag_names`` (whose counts go up). Tags that do not exist yet are created by the set()
+    itself as new rows, which no other transaction can hold. FOR NO KEY UPDATE is the lock
+    the count UPDATE takes anyway, so this changes only when the locks are taken, not which.
+    """
+    manager = test.tags
+    tag_model = manager.tag_model
+    lookup = "name" if manager.tag_options.case_sensitive else "name__iexact"
+    rows = Q(pk__in=manager.all().values("pk"))
+    for name in tag_names:
+        rows |= Q(**{lookup: name})
+    return list(
+        tag_model.objects
+        .select_for_update(no_key=True)
+        .filter(rows)
+        .order_by("pk")
+        .values_list("pk", flat=True),
+    )
 
 
 class BaseImporter(ImporterOptions):
@@ -264,10 +388,34 @@ class BaseImporter(ImporterOptions):
             msg = "A test must be supplied to parse the file"
             raise ValidationError(msg)
         try:
-            return parser.get_findings(scan, self.test)
+            findings = parser.get_findings(scan, self.test)
         except ValueError as e:
             logger.warning(e)
             raise ValidationError(e)
+        return self.finalize_parsed_findings(findings)
+
+    def group_parsed_findings(self, findings: list[Finding]) -> list[Finding]:
+        """
+        Regroup one report's parsed findings before anything else reads them. Override seam.
+
+        Runs once per parsed report (per test, for parsers that return several), before
+        hashing and before repeated tool ids are dropped. Open source keeps the parser's own
+        grouping, so this returns ``findings`` unchanged.
+        """
+        return findings
+
+    def finalize_parsed_findings(self, findings: list[Finding] | None) -> list[Finding] | None:
+        """
+        Apply the importer's rules to one report's parsed findings: regroup, then drop repeated tool ids.
+
+        A parser whose reports can carry one tool id on several findings (SARIF reports a result's
+        id at each of its locations) marks the findings it emits, and an id that still repeats
+        after regrouping cannot identify one finding, so it is cleared on every finding that
+        carries it (``dojo.tools.utils.drop_ambiguous_repeated_unique_ids``).
+        """
+        if findings is None:
+            return findings
+        return drop_ambiguous_repeated_unique_ids(self.group_parsed_findings(findings))
 
     def parse_dynamic_test_type_tests(
         self,
@@ -338,7 +486,7 @@ class BaseImporter(ImporterOptions):
         # Aggregate all of the findings into a single place
         parsed_findings = []
         for test_raw in tests:
-            parsed_findings.extend(test_raw.findings)
+            parsed_findings.extend(self.finalize_parsed_findings(test_raw.findings) or [])
         return parsed_findings
 
     def parse_findings_dynamic_test_type(
@@ -461,12 +609,38 @@ class BaseImporter(ImporterOptions):
         fail an import whose findings are already saved, so a write that still fails after
         every attempt is logged and swallowed -- the same way finding/endpoint tag writes
         already tolerate this race in add_tags_safe().
+
+        Tagulous' ``set()`` also updates each tag's reference count row one at a time, in
+        the order the tags were supplied, and the transaction holds each of those row locks
+        until it commits. Two imports writing an overlapping tag set in different orders
+        could each hold a row the other needed, and Postgres aborted one with ``deadlock
+        detected ... in relation "dojo_tagulous_test_tags"``. Every row the write will
+        update is therefore locked up front in ascending id order (see
+        _lock_test_tag_rows), the same ordering bulk_add_tags_to_instances and
+        bulk_remove_all_tags use for finding tags. A deadlock or serialization failure
+        that still happens against some other writer is retried like the IntegrityError;
+        any other OperationalError is raised.
         """
         test_id = getattr(self.test, "id", None)
+        tag_names = sorted(self.tags)
         for attempt in range(1, TEST_TAG_SET_MAX_ATTEMPTS + 1):
             try:
                 with transaction.atomic():
-                    self.test.tags.set(self.tags)
+                    _lock_test_tag_rows(self.test, tag_names)
+                    self.test.tags.set(tag_names)
+            except OperationalError as e:
+                if not is_transient_db_conflict(e):
+                    raise
+                if attempt < TEST_TAG_SET_MAX_ATTEMPTS:
+                    logger.warning(
+                        "Transient DB conflict setting tags on test %s (attempt %d/%d), retrying: %s",
+                        test_id, attempt, TEST_TAG_SET_MAX_ATTEMPTS, e,
+                    )
+                    continue
+                logger.error(
+                    "Failed to set tags on test %s after %d attempts; leaving tags unchanged: %s",
+                    test_id, TEST_TAG_SET_MAX_ATTEMPTS, e,
+                )
             except IntegrityError as e:
                 if attempt < TEST_TAG_SET_MAX_ATTEMPTS:
                     logger.warning(
@@ -516,10 +690,10 @@ class BaseImporter(ImporterOptions):
 
     def update_import_history(
         self,
-        new_findings: list[Finding] | None = None,
-        closed_findings: list[Finding] | None = None,
-        reactivated_findings: list[Finding] | None = None,
-        untouched_findings: list[Finding] | None = None,
+        new_findings: list[int] | None = None,
+        closed_findings: list[int] | None = None,
+        reactivated_findings: list[int] | None = None,
+        untouched_findings: list[int] | None = None,
     ) -> Test_Import:
         """Creates a record of the import or reimport operation that has occurred."""
         # Quick fail check to determine if we even wanted this
@@ -561,6 +735,33 @@ class BaseImporter(ImporterOptions):
         import_settings["create_finding_groups_for_all_findings"] = self.create_finding_groups_for_all_findings
         if len(self.endpoints_to_add) > 0:
             import_settings.update(self.location_handler.serialize_extra_locations(self.endpoints_to_add))
+        # Persist through an overridable hook so a subclass can redirect the write (below).
+        return self._persist_import_history(
+            import_settings,
+            new_findings,
+            closed_findings,
+            reactivated_findings,
+            untouched_findings,
+        )
+
+    def _persist_import_history(
+        self,
+        import_settings: dict,
+        new_findings: list[int],
+        closed_findings: list[int],
+        reactivated_findings: list[int],
+        untouched_findings: list[int],
+    ) -> Test_Import:
+        """
+        Persist the import-history write: the Test_Import row plus one
+        Test_Import_Finding_Action per affected finding, and return the Test_Import.
+
+        Factored out of update_import_history as an OVERRIDABLE extension point. The default is
+        the Django ORM write; a subclass may redirect the write elsewhere (e.g. delegate it to
+        another service) without reimplementing the settings-building and list-normalization that
+        update_import_history has already done. update_import_history has also already applied the
+        TRACK_IMPORT_HISTORY gate, so this is only reached when history is being recorded.
+        """
         # Create the test import object
         test_import = Test_Import.objects.create(
             test=self.test,
@@ -582,23 +783,21 @@ class BaseImporter(ImporterOptions):
 
         # In longer running imports it can happen that the async_dupe_delete task removes a finding before the history record is created
         # We filter out these findings here to avoid FK violations (IntegrityError)
-        all_findings = []
-        for list_, _ in finding_action_mappings:
-            all_findings.extend(list_)
-        existing_findings = finding_helper.filter_findings_by_existence(all_findings) if all_findings else []
-        existing_ids = {f.id for f in existing_findings}
+        dropped_finding_ids = self.deleted_finding_ids({
+            finding_id for list_, _ in finding_action_mappings for finding_id in list_
+        })
 
-        # Collect all import history records using the validated IDs
+        # Collect all import history records, skipping the findings that are gone
         import_history_records = []
-        for findings, action in finding_action_mappings:
+        for finding_ids, action in finding_action_mappings:
             import_history_records.extend(
                 Test_Import_Finding_Action(
                     test_import=test_import,
-                    finding_id=finding.id,
+                    finding_id=finding_id,
                     action=action,
                 )
-                for finding in findings
-                if finding.id in existing_ids
+                for finding_id in finding_ids
+                if finding_id is not None and finding_id not in dropped_finding_ids
             )
 
         # Bulk create all at once and let Django handle batching internally.
@@ -714,6 +913,72 @@ class BaseImporter(ImporterOptions):
         """
         return type(exception) is DatabaseError and "did not affect any rows" in str(exception)
 
+    @contextmanager
+    def import_lock_scope(self):
+        """
+        Hold the import lock taken by lock_test_under_import until the outermost scope exits.
+
+        process_scan opens one; a caller that goes on writing this import's findings after
+        process_scan returns opens its own around the call, and the lock is held until that one
+        exits. See dojo.importers.import_lock.
+        """
+        depth = getattr(self, "_import_lock_depth", 0)
+        self._import_lock_depth = depth + 1
+        try:
+            yield
+        finally:
+            self._import_lock_depth = depth
+            if depth == 0:
+                unlock_tests_under_import(getattr(self, "_import_locked_tests", []))
+                self._import_locked_tests = []
+
+    def lock_test_under_import(self, test: Test) -> None:
+        """
+        Tell the excess-duplicate delete this test is being imported, until the import ends.
+
+        Call before the first finding is created or matched. Waits if a delete is removing this
+        test's duplicates right now, so the import starts from what that delete left.
+        """
+        if getattr(self, "_import_lock_depth", 0) == 0:
+            msg = "lock_test_under_import must run inside import_lock_scope"
+            raise RuntimeError(msg)
+        locked = getattr(self, "_import_locked_tests", [])
+        if test is None or test.pk is None or test.pk in locked:
+            return
+        self._import_locked_tests = locked + lock_tests_under_import([test.pk])
+
+    def save_matched_finding(self, finding: Finding, *, no_options: bool = False) -> bool:
+        """
+        Save a finding this import matched earlier in the run, unless it has been deleted since.
+
+        A reimport matches report rows against findings it loaded at the start of a batch, and a
+        report can carry several rows for one finding (one per CVE for the same package, say), each
+        of which saves it again. If the finding is deleted in between -- by a user or client
+        deleting it through the API, a test or engagement delete, or the excess-duplicate delete --
+        a plain save() finds no row to UPDATE and falls back to an INSERT that re-creates it from the
+        stale in-memory copy, and a companion saved first (or a deferred field read on the way)
+        fails instead. force_update=True turns that into an error the vanished-row check
+        recognises, from the same statement, so nothing is re-created.
+
+        Returns False when the finding is gone: the caller skips the rest of its handling for that
+        finding and the import carries on with the others.
+        """
+        save = finding.save_no_options if no_options else finding.save
+        try:
+            save(force_update=True)
+        except type(finding).DoesNotExist:
+            pass  # a deferred field read found the row gone before the UPDATE ran
+        except DatabaseError as exception:
+            if not self._is_vanished_row_error(exception):
+                raise
+        else:
+            return True
+        using = finding._state.db or DEFAULT_DB_ALIAS
+        if connections[using].in_atomic_block:
+            transaction.set_rollback(False, using=using)
+        logger.info("Finding %s was deleted while this import was processing it; leaving it deleted", finding.pk)
+        return False
+
     def save_without_resurrecting(self, instance: Engagement | Test) -> None:
         """
         Persist an import target, refusing to re-create it if it was deleted mid-import.
@@ -762,13 +1027,7 @@ class BaseImporter(ImporterOptions):
             using = instance._state.db or DEFAULT_DB_ALIAS
             if connections[using].in_atomic_block:
                 transaction.set_rollback(False, using=using)
-            msg = (
-                f"The {instance._meta.verbose_name} this scan was being imported into "
-                f"(id {instance.pk}) was deleted while the scan was being processed, so "
-                f"the import could not be completed. Nothing was imported. Re-run the "
-                f"import against a {instance._meta.verbose_name} that still exists."
-            )
-            raise ValidationError(msg) from exception
+            raise ValidationError(deleted_target_message(instance)) from exception
 
     def update_test_progress(
         self,
@@ -908,7 +1167,10 @@ class BaseImporter(ImporterOptions):
         There is a simple conversion process to convert any of the following
         to a value of Info
         - info, informational, Informational, None, none
-        If not, raise a ValidationError explaining as such
+        Severity matching is case-insensitive, so values such as "medium" or
+        "CRITICAL" are normalized to their supported form ("Medium", "Critical").
+        If the severity is still not recognized, raise a ValidationError
+        explaining as such
         """
         # Checks around Informational/Info severity
         starts_with_info = finding.severity.lower().startswith("info")
@@ -918,6 +1180,11 @@ class BaseImporter(ImporterOptions):
         if not_info and (starts_with_info or lower_none):
             # Correct the severity
             finding.severity = "Info"
+        # Normalize the case of any remaining severity so that a value like
+        # "medium" is accepted as the supported "Medium" instead of rejected
+        if finding.severity not in SEVERITIES:
+            canonical_severities = {severity.lower(): severity for severity in SEVERITIES}
+            finding.severity = canonical_severities.get(finding.severity.lower(), finding.severity)
         # Ensure the final severity is one of the supported options
         if finding.severity not in SEVERITIES:
             msg = (
@@ -929,6 +1196,20 @@ class BaseImporter(ImporterOptions):
         finding.numerical_severity = Finding.get_numerical_severity(finding.severity)
         # Return the finding if all else is good
         return finding
+
+    def persist_new_findings(self, prepared_findings: list[Finding]) -> list[Finding]:
+        """
+        Persist a batch of new findings that have already been fully prepared
+        (scalar overrides applied, hash_code computed) and have no primary key yet.
+
+        Default: an ordinary per-instance save, in the order given. Exists as an
+        override seam so a downstream edition can swap the write strategy (e.g. a
+        bulk insert) without reimplementing the grouping/tagging/location/
+        vulnerability-id processing that runs on the returned, now-saved findings.
+        """
+        for finding in prepared_findings:
+            finding.save_no_options()
+        return prepared_findings
 
     def process_finding_groups(
         self,
@@ -967,10 +1248,19 @@ class BaseImporter(ImporterOptions):
         returning the finding afterward
         """
         for req_resp in getattr(finding, "unsaved_req_resp", []):
+            # A dynamic-scan parser can emit a pair whose request or response is missing
+            # (for example a request that produced no response), leaving "req"/"resp" as
+            # None. base64.b64encode(None.encode(...)) then raised
+            # "AttributeError: 'NoneType' object has no attribute 'encode'" and killed the
+            # whole import task. Coerce a missing side to an empty string so the pair is
+            # still stored, matching the unsaved_request/unsaved_response path below that
+            # already tolerates a missing value.
+            request = req_resp.get("req") or ""
+            response = req_resp.get("resp") or ""
             self.pending_burp_rr.append(BurpRawRequestResponse(
                 finding=finding,
-                burpRequestBase64=base64.b64encode(req_resp["req"].encode("utf-8")),
-                burpResponseBase64=base64.b64encode(req_resp["resp"].encode("utf-8")),
+                burpRequestBase64=base64.b64encode(request.encode("utf-8")),
+                burpResponseBase64=base64.b64encode(response.encode("utf-8")),
             ))
 
         unsaved_request = getattr(finding, "unsaved_request", None)
@@ -984,17 +1274,14 @@ class BaseImporter(ImporterOptions):
 
     def deleted_finding_ids(self, finding_ids: set[int]) -> set[int]:
         """
-        Of the given buffered finding ids, the ones whose finding row is gone.
+        Of the given finding ids, the ones whose finding row is gone.
 
-        One indexed primary-key lookup for the whole set; see
-        drop_rows_for_deleted_findings() for why the buffers need this at all.
+        The importer's seam onto finding_helper.deleted_finding_ids -- kept as a method so
+        the flush paths and update_import_history share one lookup and a subclass has a
+        single place to override. See drop_rows_for_deleted_findings() for why the buffers
+        need this at all.
         """
-        if not finding_ids:
-            return set()
-        live_finding_ids = set(
-            Finding.objects.filter(pk__in=finding_ids).values_list("pk", flat=True),
-        )
-        return finding_ids - live_finding_ids
+        return finding_helper.deleted_finding_ids(finding_ids)
 
     def drop_rows_for_deleted_findings(self, rows: list, deleted_finding_ids: set[int] | None = None) -> list:
         """
@@ -1061,7 +1348,15 @@ class BaseImporter(ImporterOptions):
     def sanitize_vulnerability_ids(self, finding) -> None:
         """Remove undisired vulnerability id values"""
         if finding.unsaved_vulnerability_ids:
-            finding.unsaved_vulnerability_ids = [x for x in finding.unsaved_vulnerability_ids if x.strip()]
+            # A vulnerability id is expected to be a string. A parser (notably
+            # Generic Findings Import, which passes "vulnerability_ids" through
+            # unchanged) can supply a non-string entry such as a dict; drop those
+            # instead of raising AttributeError on .strip().
+            finding.unsaved_vulnerability_ids = [
+                vulnerability_id
+                for vulnerability_id in finding.unsaved_vulnerability_ids
+                if isinstance(vulnerability_id, str) and vulnerability_id.strip()
+            ]
 
     def process_cve(
         self,
@@ -1073,6 +1368,12 @@ class BaseImporter(ImporterOptions):
         # the cve field is not needed anymore and can be removed.
         # Remove undisired vulnerability ids
         self.sanitize_vulnerability_ids(finding)
+        # A cve that is not a non-empty string is malformed input (same rule as
+        # sanitize_vulnerability_ids). Normalize it to None so it is not re-added to
+        # unsaved_vulnerability_ids below, where a non-string value would otherwise
+        # crash the dedup hash and the reimport reconciler.
+        if not (isinstance(finding.cve, str) and finding.cve.strip()):
+            finding.cve = None
         if finding.unsaved_vulnerability_ids and finding.cve:
             # Make sure the first entry of the list is the value of the cve field
             finding.unsaved_vulnerability_ids.insert(0, finding.cve)
@@ -1118,10 +1419,18 @@ class BaseImporter(ImporterOptions):
         """Accumulate a delete+insert of Finding_CWE rows for a reimported finding when its CWEs changed."""
         new_cwes = set(self.finding_cwe_values(finding))
         # finding_cwe_set is prefetched on reimport candidates (build_candidate_scope_queryset).
-        existing_cwes = {row.cwe for row in finding.finding_cwe_set.all()}
+        # A finding that has not been written yet has no persisted CWEs, and reading the reverse
+        # relation on it raises ("instance needs to have a primary key value before this
+        # relationship can be used"). Treating it as empty is exact rather than a workaround:
+        # there are no rows to compare against, so every parsed CWE is new. This lets an importer
+        # that buffers inserts reconcile a finding's CWEs before flushing the buffer.
+        existing_cwes = {row.cwe for row in finding.finding_cwe_set.all()} if finding.pk else set()
         if existing_cwes == new_cwes:
             return
-        self.pending_cwe_deletes.append(finding.id)
+        # Nothing to delete for a finding with no row yet; appending None would put a NULL in the
+        # filter that flush_vulnerability_ids() builds.
+        if finding.pk:
+            self.pending_cwe_deletes.append(finding.id)
         self.pending_cwes.extend([Finding_CWE(finding=finding, cwe=cwe) for cwe in new_cwes])
 
     def flush_vulnerability_ids(self) -> None:
@@ -1161,15 +1470,31 @@ class BaseImporter(ImporterOptions):
         object
         """
         if finding.unsaved_files:
+            title_max_length = FileUpload._meta.get_field("title").max_length
             for unsaved_file in finding.unsaved_files:
-                data = base64.b64decode(unsaved_file.get("data"))
-                title = unsaved_file.get("title", "<No title>")
+                title = unsaved_file.get("title") or "<No title>"
+                if len(title) > title_max_length:
+                    # Keep the extension, which is what the file type check reads.
+                    suffix = Path(title).suffix[-20:]
+                    title = title[:title_max_length - len(suffix)] + suffix
+                try:
+                    data = base64.b64decode(unsaved_file.get("data") or "", validate=True)
+                except (binascii.Error, ValueError):
+                    logger.warning("Skipping attachment %r on finding %r: the data is not valid base64", title, finding.title)
+                    continue
                 # Always a fresh row. Matching on title alone reused whatever
                 # FileUpload already happened to carry that name — including one
                 # attached to a finding in an unrelated product — and the save()
                 # below then repointed it at this scan's content, so the other
                 # finding silently started serving this file instead of its own.
-                file_upload = FileUpload.objects.create(title=title)
+                file_upload = FileUpload(title=title)
+                try:
+                    # The same file type rules as an upload through the UI or API.
+                    file_upload.clean()
+                except ValidationError as e:
+                    logger.warning("Skipping attachment %r on finding %r: %s", title, finding.title, e)
+                    continue
+                file_upload.save()
                 file_upload.file.save(title, ContentFile(data))
                 file_upload.save()
                 finding.files.add(file_upload)
@@ -1211,6 +1536,148 @@ class BaseImporter(ImporterOptions):
         else:
             finding.save(dedupe_option=False, push_to_jira=(self.push_to_jira or is_keep_in_sync(finding, prefetched_jira_instance=self.jira_instance)), product_grading_option=product_grading_option)
 
+    def mitigate_findings(
+        self,
+        findings: list[Finding],
+        note_message: str,
+        *,
+        finding_groups_enabled: bool,
+        product_grading_option: bool = True,
+    ) -> None:
+        """
+        Set-based mitigate_finding() for many findings at once.
+
+        Each finding ends up exactly as mitigate_finding() leaves it: the same fields,
+        the same note, the same location/endpoint statuses, the same pre_save and
+        post_save signals (Finding.save()'s own receivers, the status bookkeeping, search
+        indexing and any plugin's), the same m2m_changed for the note, and the same
+        post-save work (tool issue updater, JIRA push, product grading). What changes is
+        the cost: notes, statuses and the Finding rows are written with a fixed number of
+        statements per chunk instead of about a dozen queries per finding.
+
+        Findings are expected as loaded from the database (no unsaved edits): only the
+        columns this method, save()'s derived fields or a pre_save receiver changed are
+        written, together with the status columns.
+        """
+        if not findings:
+            return
+        db = router.db_for_write(Finding)
+        written = [f for f in Finding._meta.concrete_fields if not f.primary_key]
+        loaded = [
+            {f.attname: finding.__dict__[f.attname] for f in written if f.attname in finding.__dict__}
+            for finding in findings
+        ]
+        # mitigate_finding() decides the JIRA push before it saves, so decide it here too
+        push_to_jira = []
+        for finding in findings:
+            finding.active = False
+            finding.is_mitigated = True
+            if not finding.mitigated:
+                finding.mitigated = self.scan_date
+            finding.mitigated_by = self.user
+            in_pushed_group = finding_groups_enabled and finding.finding_group
+            push_to_jira.append(
+                not in_pushed_group
+                and (self.push_to_jira or is_keep_in_sync(finding, prefetched_jira_instance=self.jira_instance)),
+            )
+        # One transaction from the first write to the last post_save: if anything raises part way
+        # (a receiver, a write), nothing is left closed without its post-processing. The old
+        # per-finding path saved and post-processed each finding together, so a later run
+        # retried whatever it had not reached; a half-written batch would instead be skipped as
+        # already mitigated.
+        with transaction.atomic():
+            self._add_note_to_findings(findings, note_message, db)
+            for finding in findings:
+                # Remove risk acceptance if present (vulnerability is now fixed)
+                # risk_unaccept will check if finding.risk_accepted is True before proceeding
+                ra_helper.risk_unaccept(
+                    self.user, finding, perform_save=False, post_comments=False,
+                    source="reimport", reason="the scan no longer reports this finding",
+                )
+            self.location_handler.record_mitigations_for_findings(findings, self.user)
+
+            # What Finding.save() derives before writing the row
+            ids_with_locations = self._finding_ids_with_locations([f.id for f in findings if f.file_path is not None])
+            for finding in findings:
+                finding.derive_persisted_fields(dedupe_option=False, is_new_finding=False)
+                if finding.file_path is not None:
+                    finding.static_finding = True
+                    if finding.id not in ids_with_locations:
+                        finding.dynamic_finding = False
+                finding.set_sla_expiration_date()
+            for finding in findings:
+                pre_save.send(sender=Finding, instance=finding, raw=False, using=db, update_fields=None)
+            now = timezone.now()
+            changed = {"active", "is_mitigated", "mitigated", "mitigated_by", "risk_accepted", "last_status_update", "updated"}
+            for finding, before in zip(findings, loaded, strict=True):
+                finding.updated = now  # auto_now, which bulk_update does not apply
+                changed.update(f.name for f in written if f.attname in before and finding.__dict__.get(f.attname) != before[f.attname])
+            Finding.objects.bulk_update(findings, sorted(changed), batch_size=self.MITIGATE_FINDINGS_BATCH_SIZE)
+            for finding in findings:
+                post_save.send(sender=Finding, instance=finding, created=False, update_fields=None, raw=False, using=db)
+
+        # Finding.save()'s post-processing (post_process_finding_save with dedupe off)
+        system_settings = System_Settings.objects.get()
+        if system_settings.false_positive_history:
+            if system_settings.enable_deduplication:
+                logger.warning("skipping false positive history because deduplication is also enabled")
+            else:
+                # Per finding on purpose: the batch variant leaves the other findings of the
+                # batch out of each other's history, which closing one at a time does not.
+                for finding in findings:
+                    finding_helper.do_false_positive_history(finding)
+        for finding in findings:
+            tool_issue_updater.async_tool_issue_update(finding)
+        if product_grading_option and system_settings.enable_product_grade:
+            for product_id in {finding.test.engagement.product_id for finding in findings}:
+                finding_helper.schedule_product_grade(product_id)
+        for finding, push in zip(findings, push_to_jira, strict=True):
+            if not push:
+                continue
+            if finding.has_jira_issue or not finding.finding_group:
+                jira_services.push(finding)
+            elif finding.finding_group:
+                jira_services.push(finding.finding_group)
+
+    # Rows per UPDATE when mitigate_findings() writes the findings back.
+    MITIGATE_FINDINGS_BATCH_SIZE = 500
+
+    def _add_note_to_findings(self, findings: list[Finding], note_message: str, db: str) -> None:
+        """
+        Give each finding its own note, as finding.notes.create() does, in bulk.
+
+        The bulk inserts bypass the signals create() sends, so they are sent here: save
+        signals for each note and m2m_changed for each link, so a receiver (pushing notes
+        to an issue tracker, for example) sees every note it would have seen one at a time.
+        """
+        notes = [Notes(author=self.user, entry=note_message) for _ in findings]
+        for note in notes:
+            pre_save.send(sender=Notes, instance=note, raw=False, using=db, update_fields=None)
+        Notes.objects.bulk_create(notes, batch_size=self.MITIGATE_FINDINGS_BATCH_SIZE)
+        for note in notes:
+            post_save.send(sender=Notes, instance=note, created=True, update_fields=None, raw=False, using=db)
+        through = Finding.notes.through
+        pairs = list(zip(findings, notes, strict=True))
+        for finding, note in pairs:
+            m2m_changed.send(sender=through, action="pre_add", instance=finding, reverse=False, model=Notes, pk_set={note.id}, using=db)
+        through.objects.bulk_create(
+            [through(finding_id=finding.id, notes_id=note.id) for finding, note in pairs],
+            batch_size=self.MITIGATE_FINDINGS_BATCH_SIZE,
+            ignore_conflicts=True,
+        )
+        for finding, note in pairs:
+            m2m_changed.send(sender=through, action="post_add", instance=finding, reverse=False, model=Notes, pk_set={note.id}, using=db)
+
+    @staticmethod
+    def _finding_ids_with_locations(finding_ids: list[int]) -> set[int]:
+        """The ids, of these, whose finding has a location (or, before Locations, an endpoint)."""
+        model = LocationFindingReference if locations_enabled() else Endpoint_Status
+        found: set[int] = set()
+        for chunk in batched(finding_ids, BaseImporter.MITIGATE_FINDINGS_BATCH_SIZE, strict=False):
+            # order_by() drops the default ordering, which would make DISTINCT per row
+            found.update(model.objects.filter(finding_id__in=chunk).order_by().values_list("finding_id", flat=True).distinct())
+        return found
+
     def notify_scan_added(
         self,
         test,
@@ -1220,6 +1687,13 @@ class BaseImporter(ImporterOptions):
         findings_reactivated=None,
         findings_untouched=None,
     ):
+        """
+        new_findings/findings_mitigated/findings_reactivated/findings_untouched are
+        ids, not instances (M1) -- nothing here needs a live Finding until the
+        notification is actually built, and then only a capped, ordered slice of it
+        (a reimport that touches thousands of findings should not template all of
+        them into an email/webhook body).
+        """
         if findings_untouched is None:
             findings_untouched = []
         if findings_reactivated is None:
@@ -1231,69 +1705,74 @@ class BaseImporter(ImporterOptions):
         logger.debug("Scan added notifications")
 
         # When deduplication has finished (synchronous mode, or async_wait after the
-        # join), the in-memory findings still carry their pre-dedup duplicate=False
-        # flag because deduplication runs on separately-fetched instances. Refresh the
-        # flag from the database and split each list into "real" and duplicate findings
-        # so the notification reflects post-dedup reality instead of counting/listing
-        # deduplicated findings as brand new. In plain async mode dedup has not run yet,
-        # so we leave the lists untouched (best-effort, historical behavior).
-        findings_new_duplicate: list[Finding] = []
-        findings_reactivated_duplicate: list[Finding] = []
-        findings_untouched_duplicate: list[Finding] = []
+        # join), the ids collected during matching still reflect pre-dedup reality
+        # because deduplication runs on separately-fetched instances. Split each list
+        # of ids into "real" and duplicate ids from a fresh query so the notification
+        # reflects post-dedup reality instead of counting/listing deduplicated
+        # findings as brand new. In plain async mode dedup has not run yet, so we
+        # leave the lists untouched (best-effort, historical behavior).
+        findings_new_duplicate_ids: list[int] = []
+        findings_reactivated_duplicate_ids: list[int] = []
+        findings_untouched_duplicate_ids: list[int] = []
         if getattr(self, "deduplication_complete", False):
-            all_ids = [f.id for f in (*new_findings, *findings_reactivated, *findings_untouched)]
+            all_ids = [*new_findings, *findings_reactivated, *findings_untouched]
             duplicate_ids = set()
             if all_ids:
                 duplicate_ids = set(
                     Finding.objects.filter(id__in=all_ids, duplicate=True).values_list("id", flat=True),
                 )
 
-            def _split(findings):
-                kept, duplicates = [], []
-                for finding in findings:
-                    if finding.id in duplicate_ids:
-                        # refresh the in-memory flag so any template logic is correct
-                        finding.duplicate = True
-                        duplicates.append(finding)
-                    else:
-                        kept.append(finding)
+            def _split(ids):
+                kept = [i for i in ids if i not in duplicate_ids]
+                duplicates = [i for i in ids if i in duplicate_ids]
                 return kept, duplicates
 
-            new_findings, findings_new_duplicate = _split(new_findings)
-            findings_reactivated, findings_reactivated_duplicate = _split(findings_reactivated)
-            findings_untouched, findings_untouched_duplicate = _split(findings_untouched)
+            new_findings, findings_new_duplicate_ids = _split(new_findings)
+            findings_reactivated, findings_reactivated_duplicate_ids = _split(findings_reactivated)
+            findings_untouched, findings_untouched_duplicate_ids = _split(findings_untouched)
             # Recompute the headline count to exclude findings that turned out to be
             # duplicates of an existing finding (they are not genuinely new activity).
             updated_count = len(new_findings) + len(findings_reactivated) + len(findings_mitigated)
 
-        new_findings = sorted(new_findings, key=lambda x: x.numerical_severity)
-        findings_mitigated = sorted(findings_mitigated, key=lambda x: x.numerical_severity)
-        findings_reactivated = sorted(findings_reactivated, key=lambda x: x.numerical_severity)
-        findings_untouched = sorted(findings_untouched, key=lambda x: x.numerical_severity)
-        findings_new_duplicate = sorted(findings_new_duplicate, key=lambda x: x.numerical_severity)
-        findings_reactivated_duplicate = sorted(findings_reactivated_duplicate, key=lambda x: x.numerical_severity)
-        findings_untouched_duplicate = sorted(findings_untouched_duplicate, key=lambda x: x.numerical_severity)
+        max_findings = settings.NOTIFICATION_SCAN_ADDED_MAX_FINDINGS
+
+        def _capped(ids):
+            # The capped, severity-ordered slice the notification lists, as ids: the
+            # worker loads the findings, so the request never builds the message.
+            if not ids:
+                return []
+            return list(
+                Finding.objects.filter(id__in=ids)
+                .order_by("numerical_severity")
+                .values_list("id", flat=True)[:max_findings],
+            )
 
         title = (
             f"Created/Updated {updated_count} findings for {test.engagement.product}: {test.engagement.name}: {test}"
         )
 
-        create_notification(
+        # Dispatched like every other notification, so the fan-out to recipients (one
+        # alert, mail, Slack message... per user) runs in the worker, not in the import
+        # request. Under block_execution it still runs inline, as before.
+        dojo_dispatch_task(
+            async_create_notification,
             event="scan_added_empty" if updated_count == 0 else "scan_added",
             title=title,
-            findings_new=new_findings,
-            findings_mitigated=findings_mitigated,
-            findings_reactivated=findings_reactivated,
             finding_count=updated_count,
-            test=test,
-            engagement=test.engagement,
-            product=test.engagement.product,
-            findings_untouched=findings_untouched,
+            test_id=test.id,
+            engagement_id=test.engagement_id,
+            product_id=test.engagement.product_id,
             # Findings deduplicated during post-processing, split by their import action.
             # Populated only once deduplication has completed (sync / async_wait).
-            findings_new_duplicate=findings_new_duplicate,
-            findings_reactivated_duplicate=findings_reactivated_duplicate,
-            findings_untouched_duplicate=findings_untouched_duplicate,
+            finding_ids={
+                "findings_new": _capped(new_findings),
+                "findings_mitigated": _capped(findings_mitigated),
+                "findings_reactivated": _capped(findings_reactivated),
+                "findings_untouched": _capped(findings_untouched),
+                "findings_new_duplicate": _capped(findings_new_duplicate_ids),
+                "findings_reactivated_duplicate": _capped(findings_reactivated_duplicate_ids),
+                "findings_untouched_duplicate": _capped(findings_untouched_duplicate_ids),
+            },
             url=reverse("view_test", args=(test.id,)),
             url_api=reverse("test-detail", args=(test.id,)),
         )

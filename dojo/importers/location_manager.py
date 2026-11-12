@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 
 from dojo.importers.base_location_manager import BaseLocationManager
@@ -38,8 +39,22 @@ class LocationManager(BaseLocationManager):
 
     def __init__(self, product: Product) -> None:
         super().__init__(product)
-        # Maps findings to a list of cleaned locations
-        self._locations_by_finding: dict[Finding, list[AbstractLocation]] = {}
+        # Findings paired with their cleaned locations, in first-recorded order.
+        #
+        # A list of pairs rather than a dict keyed by the finding, because a Finding that has not
+        # been written yet has no primary key and Django's Model.__hash__ raises on it
+        # ("Model instances without primary key value are unhashable"). Keying by the object would
+        # therefore forbid recording locations for a finding before it is saved -- and with it any
+        # importer that buffers inserts to write them in bulk at a batch boundary. Nothing here
+        # needs the object to be hashable: both consumers in _persist_locations() simply iterate,
+        # and they run inside persist(), by which point the findings are written. The tag
+        # accumulator threaded through finding_post_processing() already uses this same shape.
+        self._locations_by_finding: list[tuple[Finding, list[AbstractLocation]]] = []
+        # Slot index into the list above so repeated records for one finding coalesce, keyed by
+        # object identity rather than by the finding itself for the reason above. id() is safe
+        # here specifically because the list holds a strong reference to every finding recorded,
+        # so no entry can be collected and have its id reused while this accumulator is live.
+        self._location_slot_by_finding: dict[int, int] = {}
         # All locations needing product refs (finding-associated + product-only), cleaned at record time
         self._product_locations: list[AbstractLocation] = []
         # Status update entries, which we'll use at persist-time to determine Location statuses by comparing
@@ -61,8 +76,21 @@ class LocationManager(BaseLocationManager):
     ) -> None:
         """Record locations to be associated with a finding (and its product). Flushed by persist()."""
         if locations:
-            cleaned = self.clean_unsaved_locations(locations)
-            self._locations_by_finding.setdefault(finding, []).extend(cleaned)
+            self._record_cleaned_locations(finding, self.clean_unsaved_locations(locations))
+
+    def _record_cleaned_locations(
+        self,
+        finding: Finding,
+        cleaned: list[AbstractLocation],
+    ) -> None:
+        """Record locations that have already been through clean_unsaved_locations()."""
+        if cleaned:
+            slot = self._location_slot_by_finding.get(id(finding))
+            if slot is None:
+                self._location_slot_by_finding[id(finding)] = len(self._locations_by_finding)
+                self._locations_by_finding.append((finding, list(cleaned)))
+            else:
+                self._locations_by_finding[slot][1].extend(cleaned)
             self._product_locations.extend(cleaned)
 
     def update_location_status(
@@ -80,11 +108,11 @@ class LocationManager(BaseLocationManager):
 
     def clean_unsaved(self, finding: Finding) -> None:
         """Clean the unsaved locations on this finding."""
-        self.clean_unsaved_locations(finding.unsaved_locations)
+        self.cleaned_unsaved_locations(finding)
 
     def record_for_finding(self, finding: Finding, extra_locations: list[UnsavedLocation] | None = None) -> None:
         """Record locations from the finding + any form-added extras for later batch creation."""
-        self.record_locations_for_finding(finding, finding.unsaved_locations)
+        self._record_cleaned_locations(finding, self.cleaned_unsaved_locations(finding))
         if extra_locations:
             self.record_locations_for_finding(finding, extra_locations)
 
@@ -118,6 +146,19 @@ class LocationManager(BaseLocationManager):
 
     def persist(self) -> None:
         """Persist all accumulated location operations to the database."""
+        # Both steps below already short-circuit when their accumulators are empty, so with
+        # nothing buffered the only cost of proceeding is an empty transaction -- inside an
+        # outer atomic block that is a SAVEPOINT/RELEASE pair, i.e. two queries to do
+        # nothing. persist() is called unconditionally at every batch boundary and again by
+        # close_old_findings, so those pairs are paid on imports that touched no location at
+        # all. The condition is the union of the two inner guards.
+        if not (
+            self._product_locations
+            or self._status_updates
+            or self._refs_to_reactivate
+            or self._refs_to_mitigate
+        ):
+            return
         with transaction.atomic():
             self._persist_locations()
             self._persist_status_updates()
@@ -132,8 +173,7 @@ class LocationManager(BaseLocationManager):
         # full set — _product_locations is the superset of all locations (finding-associated + product-only).
         all_locations = list({(type(loc), loc.identity_hash): loc for loc in self._product_locations}.values())
         if not all_locations:
-            self._locations_by_finding.clear()
-            self._product_locations.clear()
+            self._clear_location_accumulators()
             return
 
         # Bulk persist all locations to the database
@@ -172,28 +212,30 @@ class LocationManager(BaseLocationManager):
 
         # Determine necessary finding refs to create
         if self._locations_by_finding:
-            all_finding_ids = [finding.id for finding in self._locations_by_finding]
+            all_finding_ids = [finding.id for finding, _ in self._locations_by_finding]
             # Strictly speaking this returns more rows than we need (it's the cross of the location/finding lists rather
             # than scoped per-finding), but more straightforward than constructing a per-finding lookup. We won't create
             # any unwanted associations below anyway.
-            existing_finding_ref_keys: set[tuple[int, int]] = set(
+            existing_finding_ref_keys: set[tuple[int, int, int]] = set(
                 LocationFindingReference.objects.filter(
                     location_id__in=all_location_ids,
                     finding_id__in=all_finding_ids,
-                ).values_list("finding_id", "location_id"),
+                ).values_list("finding_id", "location_id", "test_id"),
             )
 
-            for finding, cleaned_locations in self._locations_by_finding.items():
+            for finding, cleaned_locations in self._locations_by_finding:
+                test_id = self.attribution_test_id(finding)
                 # Locations were already cleaned at record time — identity_hash is set, so we can
                 # look up the persisted location directly.
                 for location in cleaned_locations:
                     saved_loc = saved_by_key[type(location), location.identity_hash]
-                    finding_ref_key = (finding.id, saved_loc.location_id)
+                    finding_ref_key = (finding.id, saved_loc.location_id, test_id)
                     if finding_ref_key not in existing_finding_ref_keys:
                         assoc = saved_loc.get_association_data()
                         all_finding_refs.append(LocationFindingReference(
                             location_id=saved_loc.location_id,
                             finding=finding,
+                            test_id=test_id,
                             status=FindingLocationStatus.Active,
                             relationship=assoc.relationship_type,
                             relationship_data=assoc.relationship_data,
@@ -201,6 +243,7 @@ class LocationManager(BaseLocationManager):
                         existing_finding_ref_keys.add(finding_ref_key)
 
         # Bulk create references
+        all_finding_refs = self._drop_finding_refs_for_missing_findings(all_finding_refs)
         if all_finding_refs:
             LocationFindingReference.objects.bulk_create(
                 all_finding_refs, batch_size=1000, ignore_conflicts=True,
@@ -224,7 +267,59 @@ class LocationManager(BaseLocationManager):
             )
 
         # Clear accumulators
+        self._clear_location_accumulators()
+
+    @staticmethod
+    def _drop_finding_refs_for_missing_findings(
+        finding_refs: list[LocationFindingReference],
+    ) -> list[LocationFindingReference]:
+        """
+        Return the references whose finding still exists, dropping any orphaned ones.
+
+        A ``LocationFindingReference`` is built against a finding during the import batch and
+        inserted later in :meth:`_persist_locations`. If that finding is removed between the
+        build and the insert -- a delete landing mid-import, or a finding dropped from the
+        batch -- its ``finding_id`` points at a ``dojo_finding`` row that no longer exists.
+        Django declares foreign keys ``DEFERRABLE INITIALLY DEFERRED`` on PostgreSQL, so the
+        constraint is only validated at COMMIT, surfacing there as a 500 naming
+        ``dojo_locationfindingreference`` long past this call. Checked before the write, the
+        surviving findings still get their references while the orphans are dropped -- the
+        same guard the ``EnhancedFinding`` companion write uses.
+
+        A reference whose ``finding_id`` is unresolved (``None``) is kept: that is a caller
+        bug, left for the database to report clearly rather than silently dropped here.
+        """
+        if not finding_refs:
+            return finding_refs
+
+        from dojo.models import Finding  # noqa: PLC0415 -- lazy import, avoids circular dependency
+
+        finding_ids = {ref.finding_id for ref in finding_refs if ref.finding_id is not None}
+        if not finding_ids:
+            return finding_refs
+
+        present = set(Finding._base_manager.filter(pk__in=finding_ids).values_list("pk", flat=True))
+        missing = finding_ids - present
+        if not missing:
+            return finding_refs
+
+        logger.warning(
+            "Dropping %d LocationFindingReference row(s) whose finding no longer exists "
+            "(finding ids %s); a finding was removed mid-import.",
+            len(missing),
+            sorted(missing),
+        )
+        return [ref for ref in finding_refs if ref.finding_id not in missing]
+
+    def _clear_location_accumulators(self) -> None:
+        """
+        Reset the location accumulators together.
+
+        The slot index is derived from the pair list, so clearing one without the other would
+        leave stale slots pointing past the end of the list.
+        """
         self._locations_by_finding.clear()
+        self._location_slot_by_finding.clear()
         self._product_locations.clear()
 
     def _persist_status_updates(self) -> None:
@@ -245,6 +340,9 @@ class LocationManager(BaseLocationManager):
 
         Finally, product associations are updated: if any location associated with a finding on this product is Active,
         the LocationProductReference object is set to Active; otherwise, it is set to Mitigated.
+
+        Every change is limited to the rows attributed to the test being (re)imported (see attribution_test_id), so a
+        reimport never mitigates a location that another test still reports on the same finding.
         """
         # Short-circuit if nothing to do
         if not (self._status_updates or self._refs_to_reactivate or self._refs_to_mitigate):
@@ -265,15 +363,18 @@ class LocationManager(BaseLocationManager):
         # Process status updates determined by comparing existing/new findings
         if self._status_updates:
             # Look up all the existing LocationFindingReference objects and store per-Finding
-            existing_finding_ids = {upd.existing_finding.id for upd in self._status_updates}
+            test_by_finding = {
+                upd.existing_finding.id: self.attribution_test_id(upd.existing_finding) for upd in self._status_updates
+            }
             refs_by_finding: dict[int, list[LocationFindingReference]] = {}
             for ref in (
                 LocationFindingReference.objects
-                .filter(finding_id__in=existing_finding_ids)
+                .filter(finding_id__in=test_by_finding.keys())
                 .exclude(status__in=special_statuses)
                 .select_related("location")
             ):
-                refs_by_finding.setdefault(ref.finding_id, []).append(ref)
+                if ref.test_id == test_by_finding[ref.finding_id]:
+                    refs_by_finding.setdefault(ref.finding_id, []).append(ref)
 
             # Next: for each StatusUpdateEntry, determine what we should do with the existing refs
             for existing_finding, new_finding, user in self._status_updates:
@@ -285,7 +386,7 @@ class LocationManager(BaseLocationManager):
                     # The new finding is not mitigated; we need to reactivate locations that are in the new finding and
                     # mitigate statuses that are NOT in the new finding.
                     new_loc_values = {
-                        str(loc) for loc in self.clean_unsaved_locations(new_finding.unsaved_locations)
+                        str(loc) for loc in self.cleaned_unsaved_locations(new_finding)
                     }
                     for ref in finding_refs:
                         if ref.location.location_value in new_loc_values:
@@ -296,9 +397,11 @@ class LocationManager(BaseLocationManager):
         # Update the "reactivate set" with the IDs of existing LocationFindingReference objects we need to reactivate
         if self._refs_to_reactivate:
             ref_ids_to_reactivate.update(
-                LocationFindingReference.objects.filter(
-                    finding_id__in=self._refs_to_reactivate,
-                    status=FindingLocationStatus.Mitigated,
+                self._scope_to_attributed_test(
+                    LocationFindingReference.objects.filter(
+                        finding_id__in=self._refs_to_reactivate,
+                        status=FindingLocationStatus.Mitigated,
+                    ),
                 ).values_list("id", flat=True),
             )
 
@@ -307,8 +410,10 @@ class LocationManager(BaseLocationManager):
         if self._refs_to_mitigate:
             ref_ids_to_mitigate.update({
                 ref_id: self._refs_to_mitigate[finding_id]
-                for ref_id, finding_id in LocationFindingReference.objects.filter(
-                    finding_id__in=self._refs_to_mitigate.keys(),
+                for ref_id, finding_id in self._scope_to_attributed_test(
+                    LocationFindingReference.objects.filter(
+                        finding_id__in=self._refs_to_mitigate.keys(),
+                    ),
                 ).exclude(status__in=special_statuses).values_list("id", "finding_id")
             })
 
@@ -395,6 +500,12 @@ class LocationManager(BaseLocationManager):
         self._refs_to_reactivate.clear()
         self._refs_to_mitigate.clear()
 
+    def _scope_to_attributed_test(self, refs):
+        """Limit ``refs`` to the rows attributed to the test being imported (each finding's own test if unset)."""
+        if self._test_id is not None:
+            return refs.filter(test_id=self._test_id)
+        return refs.filter(test_id=F("finding__test_id"))
+
     # ------------------------------------------------------------------
     # Type registry
     # ------------------------------------------------------------------
@@ -443,6 +554,28 @@ class LocationManager(BaseLocationManager):
             except ValidationError as e:
                 logger.warning("DefectDojo is storing broken locations because cleaning wasn't successful: %s", e)
         return locations
+
+    @classmethod
+    def cleaned_unsaved_locations(cls, finding: Finding) -> list[AbstractLocation]:
+        """
+        Clean finding.unsaved_locations exactly once per finding and memoize the result.
+
+        The import pipeline needs the cleaned list several times per finding — hash_code
+        computation (Finding.get_locations), recording for persistence, and reimport
+        status comparison. Cleaning converts LocationData to model instances and
+        re-parses/re-hashes every URL, so repeating it is pure CPU waste and was the
+        dominant cost of a locations-on import for endpoint-heavy reports. The memo is
+        keyed on the identity of the raw list, so code that assigns a fresh
+        unsaved_locations list gets a fresh clean; mutating the list in place after the
+        first clean is not supported (no in-tree caller does).
+        """
+        raw = finding.unsaved_locations
+        cached = getattr(finding, "_cleaned_unsaved_locations_cache", None)
+        if cached is not None and cached[0] is raw:
+            return cached[1]
+        cleaned = cls.clean_unsaved_locations(raw)
+        finding._cleaned_unsaved_locations_cache = (raw, cleaned)
+        return cleaned
 
     # ------------------------------------------------------------------
     # Bulk internals

@@ -17,6 +17,8 @@ Beim Einrichten eines Connectors für ein unterstütztes Tool müssen Sie Defect
 * **Location** \-ein Feld, das im Allgemeinen auf die URL Ihres Tools in Ihrem Netzwerk verweist,
 * **Secret** \- in der Regel ein API-Schlüssel.
 
+Viele Tools stellen genau einen festen API\-Host bereit. Für diese füllt DefectDojo das Feld **Location** beim Anlegen des Connectors automatisch aus. Sie müssen die URL also nicht von dieser Seite kopieren. Behalten Sie den vorgegebenen Wert. Ändern Sie ihn nur, wenn Ihre Instanz einen anderen Host verwendet, zum Beispiel eine selbst gehostete Installation oder eine andere Region.
+
 Manche Tools benötigen über **Location** und **Secret** hinaus weitere API-bezogene Felder. Möglicherweise müssen Sie auch auf der Seite des Tools Änderungen vornehmen, um einen eingehenden Connector von DefectDojo zu ermöglichen.
 
 ![image](images/connectors_tool_reference.png)
@@ -32,7 +34,7 @@ Die meisten Connectors importieren **Befunde** aus einem Sicherheitstool. **Asse
 * **Discover** und **Sync** gleichen beide die Asset-Liste ab. Neue Assets erscheinen als `NEW`-Einträge; sobald sie zugeordnet sind (automatisch, wenn Auto-Mapping aktiviert ist), erstellt DefectDojo das Produkt und ordnet es einem vom Tool abgeleiteten Produkttyp zu — zum Beispiel dem GitLab-Namespace oder dem Azure-DevOps-Projekt.
 * Wird ein Asset später upstream entfernt (zum Beispiel ein gelöschtes Repository), wird sein zugeordneter Eintrag beim nächsten Sync als `MISSING` markiert, damit Ihr Team ihn prüfen kann. DefectDojo löscht niemals stillschweigend ein Produkt.
 
-Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, Jira Service Management Assets und ServiceNow CMDB sind Asset-Connectors. runZero ist in erster Linie ein Asset-Connector, kann aber optional auch Schwachstellen als Befunde importieren. Alle anderen unten aufgeführten Connectors importieren Befunde.
+Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, Google Cloud, Jira Service Management Assets und ServiceNow CMDB sind Asset-Connectors. runZero ist in erster Linie ein Asset-Connector, kann aber optional auch Schwachstellen als Befunde importieren. Alle anderen unten aufgeführten Connectors importieren Befunde.
 
 # **Unterstützte Connectors**
 
@@ -66,6 +68,7 @@ Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, Jira Service Management Asse
 - [GitHub](/connectors/toolreference/github/#upstream-connector)
 - [GitHub Advanced Security](/connectors/toolreference/github_advanced_security/)
 - [GitLab](/connectors/toolreference/gitlab/#upstream-connector)
+- [Google Cloud](/connectors/toolreference/google_cloud/)
 - [Google Cloud Security Command Center](/connectors/toolreference/google_cloud_scc/)
 - [Group-IB ASM](/connectors/toolreference/group_ib_asm/)
 - [HackerOne](/connectors/toolreference/hackerone/)
@@ -92,6 +95,7 @@ Azure DevOps, Backstage, Bitbucket, GitHub, GitLab, Jira Service Management Asse
 - [Quay](/connectors/toolreference/quay/)
 - [Rapid7 InsightAppSec](/connectors/toolreference/rapid7_insightappsec/)
 - [Rapid7 InsightVM](/connectors/toolreference/rapid7_insightvm/)
+- [Rapid7 InsightVM - Cloud Instance](/connectors/toolreference/rapid7_insightvm_cloud/)
 - [runZero](/connectors/toolreference/runzero/)
 - [Semgrep](/connectors/toolreference/semgrep/)
 - [ServiceNow CMDB](/connectors/toolreference/servicenow_cmdb/)

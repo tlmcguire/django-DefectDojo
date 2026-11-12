@@ -41,6 +41,7 @@ window.ddOffcanvas = Offcanvas;
     };
 
     const switchPageForVersion = (version) => {
+        let moved = false;
         Object.values(editionNavUrls).forEach((urls) => {
             const target = urls[version];
             const other = urls[version === "pro" ? "opensource" : "pro"];
@@ -48,8 +49,25 @@ window.ddOffcanvas = Offcanvas;
             // this never fires on unrelated pages or loops on the target page.
             if (target && location.pathname === other) {
                 location.assign(target);
+                moved = true;
             }
         });
+        if (moved) return;
+
+        // Any other page that belongs to one edition (audience in front matter,
+        // stamped on <html> by custom-head.html): switching to the other edition
+        // used to swap only the sidebar and leave this page on screen, so readers
+        // clicked the toggle again and again. Go to the first page of the chosen
+        // edition in this section's sidebar instead, preferring a page that
+        // belongs to that edition over a shared one.
+        const pageAudience = document.documentElement.dataset.ddPageAudience;
+        if (!pageAudience || pageAudience === version) return;
+        const menu = document.querySelector(`.version-${version}`);
+        if (!menu) return;
+        const link = menu.querySelector(`li[data-audience="${version}"] a[href]`) || menu.querySelector("a[href]");
+        if (link && link.pathname !== location.pathname) {
+            location.assign(link.href);
+        }
     };
 
     const setVersion = (version) => {
@@ -106,6 +124,64 @@ window.ddOffcanvas = Offcanvas;
     });
     observer.observe(document.body, { childList: true, subtree: true });
 
+})();
+
+
+// Table-of-contents scrollspy vs. heading ids that start with a digit.
+//
+// Bootstrap's ScrollSpy (data-bs-spy on <body>, started on window load) looks
+// up each TOC link with element.querySelector(link.hash). A heading such as
+// "1. Register the CLI" gets the id "1-register-the-cli", and "#1-register-
+// the-cli" is not a valid CSS selector, so ScrollSpy throws and the TOC stops
+// tracking the page. Before it starts, move such a heading to a safe id and
+// repoint the links to it; an empty span keeps the old id in place so links
+// already shared with the old #fragment still land on the heading.
+(() => {
+    "use strict";
+
+    const validSelector = (sel) => {
+        try {
+            document.createDocumentFragment().querySelector(sel);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    };
+
+    const init = () => {
+        const toc = document.getElementById("toc");
+        if (!toc) return;
+        toc.querySelectorAll('a[href^="#"]').forEach((link) => {
+            let id;
+            try {
+                id = decodeURIComponent(link.hash.slice(1));
+            } catch (e) {
+                return;
+            }
+            if (!id || validSelector(`#${id}`)) return;
+            const heading = document.getElementById(id);
+            if (!heading) return;
+            let safe = `h-${id}`;
+            for (let n = 2; document.getElementById(safe); n++) safe = `h-${id}-${n}`;
+            if (!validSelector(`#${safe}`)) return;
+            heading.id = safe;
+            const keep = document.createElement("span");
+            keep.id = id;
+            keep.setAttribute("aria-hidden", "true");
+            keep.style.scrollMarginTop = getComputedStyle(heading).scrollMarginTop;
+            heading.prepend(keep);
+            const oldHref = link.getAttribute("href");
+            document.querySelectorAll("a[href]").forEach((a) => {
+                if (a.getAttribute("href") === oldHref) a.setAttribute("href", `#${safe}`);
+            });
+        });
+    };
+
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", init);
+    } else {
+        init();
+    }
 })();
 
 
@@ -188,4 +264,95 @@ window.ddOffcanvas = Offcanvas;
     } else {
         init();
     }
+})();
+
+// ---------------------------------------------------------------------------
+// Dot field: the lattice behind dark bands scatters on load and eases home.
+// Same motion as defectdojo.com's hero (22px lattice, 1.7s, staggered
+// cubic ease-out). Canvas is created here, so no inline script and no
+// external asset: CSP stays default-src 'self'. Reduced motion draws the
+// settled state directly. window.ddField.replay() re-runs the resolve.
+// ---------------------------------------------------------------------------
+(() => {
+  'use strict';
+
+  const hosts = document.querySelectorAll('[data-dd-field]');
+  if (!hosts.length || !window.HTMLCanvasElement) return;
+
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const fields = [];
+
+  function makeField(host) {
+    const canvas = document.createElement('canvas');
+    canvas.className = 'dd-field';
+    canvas.setAttribute('aria-hidden', 'true');
+    const ctx = canvas.getContext && canvas.getContext('2d');
+    if (!ctx) return null;
+    host.insertBefore(canvas, host.firstChild);
+    host.classList.add('has-field');
+
+    const f = { host, canvas, ctx, dots: [], w: 0, h: 0, raf: null };
+
+    f.size = () => {
+      f.w = host.clientWidth;
+      f.h = host.clientHeight;
+      canvas.width = f.w * dpr;
+      canvas.height = f.h * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+
+    f.seed = () => {
+      f.dots.length = 0;
+      for (let y = 11; y < f.h; y += 22) {
+        for (let x = 11; x < f.w; x += 22) {
+          const a = Math.random() * Math.PI * 2;
+          const r = 60 + 220 * Math.random();
+          f.dots.push({ x, y, sx: x + Math.cos(a) * r, sy: y + Math.sin(a) * r, d: 0.45 * Math.random() });
+        }
+      }
+    };
+
+    f.draw = (p) => {
+      ctx.clearRect(0, 0, f.w, f.h);
+      ctx.fillStyle = 'rgba(255, 248, 240, 0.22)';
+      for (const o of f.dots) {
+        const t = Math.min(1, Math.max(0, (p - o.d) / 0.55));
+        const e = 1 - Math.pow(1 - t, 3);
+        ctx.beginPath();
+        ctx.arc(o.sx + (o.x - o.sx) * e, o.sy + (o.y - o.sy) * e, 1.1, 0, 6.2832);
+        ctx.fill();
+      }
+    };
+
+    f.resolve = () => {
+      if (f.raf) { cancelAnimationFrame(f.raf); f.raf = null; }
+      if (reduced) { f.draw(1); return; }
+      let t0 = null;
+      const tick = (ts) => {
+        if (t0 === null) t0 = ts;
+        const p = Math.min(1, (ts - t0) / 1700);
+        f.draw(p);
+        f.raf = p < 1 ? requestAnimationFrame(tick) : null;
+      };
+      f.raf = requestAnimationFrame(tick);
+    };
+
+    f.size();
+    f.seed();
+    f.resolve();
+    return f;
+  }
+
+  hosts.forEach((host) => { const f = makeField(host); if (f) fields.push(f); });
+
+  let resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => fields.forEach((f) => { f.size(); f.seed(); f.draw(1); }), 120);
+  });
+
+  window.ddField = {
+    replay() { fields.forEach((f) => { f.seed(); f.resolve(); }); },
+  };
 })();

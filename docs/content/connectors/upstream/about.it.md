@@ -58,6 +58,7 @@ Attualmente supportiamo Connettori Upstream per i seguenti strumenti, con altri 
 * **GitHub**
 * **GitHub Advanced Security**
 * **GitLab**
+* **Google Cloud**
 * **Google Cloud Security Command Center**
 * **Group-IB ASM**
 * **HackerOne**
@@ -84,6 +85,7 @@ Attualmente supportiamo Connettori Upstream per i seguenti strumenti, con altri 
 * **Quay**
 * **Rapid7 InsightAppSec**
 * **Rapid7 InsightVM**
+* **Rapid7 InsightVM - Cloud Instance**
 * **runZero**
 * **Semgrep**
 * **ServiceNow CMDB**
@@ -102,7 +104,7 @@ Attualmente supportiamo Connettori Upstream per i seguenti strumenti, con altri 
 
 Per le istruzioni di configurazione passo\-passo di ciascuno strumento, consulta il riferimento [Configurazione dei Connettori per Strumento Specifico](../toolreference/).
 
-La maggior parte dei Connettori importa **riscontri**. Alcuni sono **Connettori di Asset (Asset Connector)** che importano invece il tuo **inventario di asset** — costruendo e mantenendo la gerarchia di Prodotto (Asset) e Tipo di Prodotto (Organizzazione) anziché importare riscontri: **Azure DevOps**, **Backstage**, **Bitbucket**, **GitHub**, **GitLab**, **Jira Service Management Assets** e **ServiceNow CMDB**. (**runZero** è principalmente un Connettore di Asset, ma può opzionalmente importare anche le vulnerabilità come riscontri.)
+La maggior parte dei Connettori importa **riscontri**. Alcuni sono **Connettori di Asset (Asset Connector)** che importano invece il tuo **inventario di asset** — costruendo e mantenendo la gerarchia di Prodotto (Asset) e Tipo di Prodotto (Organizzazione) anziché importare riscontri: **Azure DevOps**, **Backstage**, **Bitbucket**, **GitHub**, **GitLab**, **Google Cloud**, **Jira Service Management Assets** e **ServiceNow CMDB**. (**runZero** è principalmente un Connettore di Asset, ma può opzionalmente importare anche le vulnerabilità come riscontri.)
 
 Queste connessioni offrono un'integrazione con DefectDojo alla velocità delle API e possono essere usate per acquisire e organizzare automaticamente i dati di vulnerabilità provenienti dallo strumento.
 

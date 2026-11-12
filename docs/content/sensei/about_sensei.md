@@ -18,11 +18,15 @@ weight: 1
 
 > **☁️ Beyond code — cloud posture (CSPM):** the same scan-and-fix flow applies to **cloud accounts**. Connect an AWS account, Azure subscription, or GCP project; Sensei scans it for misconfigurations, imports them as findings, and remediates them by an IaC pull request or a **reversible change to the live resource**. AppSec and CSPM share one hub, selected by a capability card. See [Cloud Security Posture (CSPM)](/sensei/cloud_posture/).
 
+> **🤖 Beyond code — AI agents:** the same hub can red-team a **deployed AI agent**. Point Sensei at your agent's endpoint and it runs an autonomous attacker that probes it multi-turn and imports each confirmed break — prompt injection, jailbreaks, data leakage, unsafe tool use — as a finding. See [AI Agent Red Teaming](/sensei/ai_agent_redteam/). (Beta.)
+
 > **🧠 Before the code exists:** Sensei also generates a threat model, attack paths and security requirements from a feature *design*, with no repository involved — see [Threat Modeling](/sensei/threat_modeling/).
+
+> **🤖 AI agent skills:** Sensei's scanning also covers **AI agent skills**: the `SKILL.md` definitions and helper scripts that coding agents load. When a DefectDojo-hosted scan runs on an onboarded repository that ships agent skills, Sensei statically analyzes them for prompt injection, data exfiltration, and other risky or malicious patterns, then imports the results as findings alongside the repository's code.
 
 > **🔎 BETA:** Sensei is under active development and is labeled **BETA** throughout the UI. Behavior and screens may change between releases.
 
-> **📍 Where to find it:** open **Sensei** from the left-hand navigation.
+> **📍 Where to find it:** open **Sensei + AI > Sensei** from the left-hand navigation.
 
 ![Sensei hub](images/hub_overview.png)
 
@@ -43,7 +47,7 @@ Sensei can remediate a finding in three ways:
 
 - **The Fix button on a finding:** trigger a one-off fix directly from the findings table or a finding's detail page. See [Fixing findings with Sensei](/sensei/fixing_findings/).
 - **Auto-fix candidates:** after each scan, Sensei stages the findings that match your criteria as candidates. You review them and approve the ones to fix (or let Sensei remediate them automatically). See [Auto-fix candidates](/sensei/fixing_findings/#auto-fix-candidate-triage).
-- **A `/fix` comment on a pull request:** comment `/fix` on a pull request and Sensei pushes a remediation to that PR.
+- **A `/fix` comment on a pull request:** comment `/fix` on a pull request and Sensei pushes a remediation to that PR. Only someone who can push to the repository can run it. On Azure DevOps, use the Fix button instead.
 
 ## Requirements
 

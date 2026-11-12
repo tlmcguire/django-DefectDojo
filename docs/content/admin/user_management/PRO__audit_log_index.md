@@ -87,8 +87,8 @@ attributed to the user who triggered it.
 | Rule Filter Entry                 |   ✅   |   ✅   |   ✅   |                                |
 | Rules Engine Operation            |   ✅   |   ✅   |   ✅   |                                |
 | Rules Engine Operation Message    |   ✅   |   ✅   |   ✅   |                                |
-| Rules Engine 2.0 Rule             |   ✅   |   ✅   |   ✅   | Node based rules               |
-| Rules Engine 2.0 Delivery         |   ✅   |   ✅   |   ✅   | Entries in the Deliveries ledger |
+| Triage Engine Rule             |   ✅   |   ✅   |   ✅   | Node based rules               |
+| Triage Engine Delivery         |   ✅   |   ✅   |   ✅   | Entries in the Deliveries ledger |
 | Scheduled Task                    |   ✅   |   ✅   |   ✅   |                                |
 | Scheduled Task Run                |   ✅   |   ✅   |   ✅   |                                |
 | Mitigation Policy                 |   ✅   |   ✅   |   ✅   |                                |
@@ -116,6 +116,9 @@ attributed to the user who triggered it.
 | Organization Group Assignment |   ✅   |   ✅   |   ✅   |
 | Asset Member                |   ✅   |   ✅   |   ✅   |
 | Organization Member           |   ✅   |   ✅   |   ✅   |
+| View As Session               |   ✅   |   ✅   |   ✅   |
+
+A View As Session's create is the start of a [View As User](../pro__view_as_user/) session and its update is the end. The browser session it ran in is never stored, only a digest of it, and the digest is excluded from the audit log.
 
 ### Pro — relationship (add / remove) events
 

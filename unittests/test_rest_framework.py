@@ -1819,8 +1819,10 @@ class RiskAcceptanceTest(BaseClass.BaseClassTest):
             "created": "2020-11-09T23:13:08.520000Z",
             "updated": "2023-09-15T17:17:39.462854Z",
             "owner": 1,
+            # 226 is already in the fixture's risk acceptance 1, and a finding belongs to one acceptance at a
+            # time, so the new acceptance takes 227: the same test, not yet risk accepted.
             "accepted_findings": [
-                226,
+                227,
             ],
             "notes": [],
         }
@@ -2490,6 +2492,26 @@ class FindingMetadataTest(BaseClass.BaseClassTest):
         self.assertEqual(result["name"], "test_meta", "Metadata not edited correctly")
         self.assertEqual(result["value"], "40", "Metadata not edited correctly")
 
+    def test_update_rejects_oversized_value(self):
+        response = self.client.put(
+            self.base_url + "?name=test_meta",
+            data={"name": "test_meta", "value": "x" * 301},
+        )
+        self.assertEqual(status.HTTP_400_BAD_REQUEST, response.status_code, response.data)
+
+        result = self.client.get(self.base_url).data[0]
+        self.assertEqual(result["value"], "20", "Rejected update still wrote to the database")
+
+    def test_update_rejects_missing_name(self):
+        response = self.client.put(self.base_url + "?name=test_meta", data={"value": "40"})
+        self.assertEqual(status.HTTP_400_BAD_REQUEST, response.status_code, response.data)
+        # The unvalidated path also 400s here, but via IntegrityError with a misleading message.
+        self.assertIsInstance(response.data, dict, response.data)
+        self.assertIn("name", response.data)
+
+        result = self.client.get(self.base_url).data[0]
+        self.assertEqual(result["value"], "20", "Rejected update still wrote to the database")
+
     def test_delete(self):
         self.client.delete(self.base_url + "?name=test_meta")
         result = self.client.get(self.base_url).data
@@ -2730,13 +2752,12 @@ class Product_API_Scan_ConfigurationTest(BaseClass.BaseClassTest):
         BaseClass.RESTEndpointTest.__init__(self, *args, **kwargs)
 
     def test_deprecation_notice_header(self):
-        # Deprecated in 3.2.0, removal planned for 3.5.0 (serves the API-based pull parsers).
         response = self.client.get(self.url, format="json")
         self.assertEqual(200, response.status_code, response.content[:1000])
         self.assertTrue(response.has_header("X-Deprecated"))
         self.assertEqual("True", str(response["X-Deprecated"]))
         self.assertTrue(response.has_header("X-End-Of-Life-Date"))
-        self.assertTrue(str(response["X-End-Of-Life-Date"]).startswith("2026-11-01"))
+        self.assertTrue(str(response["X-End-Of-Life-Date"]).startswith("2026-12-07"))
 
 
 @versioned_fixtures
@@ -2763,13 +2784,12 @@ class Asset_API_Scan_ConfigurationTest(BaseClass.BaseClassTest):
         BaseClass.RESTEndpointTest.__init__(self, *args, **kwargs)
 
     def test_deprecation_notice_header(self):
-        # Deprecated in 3.2.0, removal planned for 3.5.0 (serves the API-based pull parsers).
         response = self.client.get(self.url, format="json")
         self.assertEqual(200, response.status_code, response.content[:1000])
         self.assertTrue(response.has_header("X-Deprecated"))
         self.assertEqual("True", str(response["X-Deprecated"]))
         self.assertTrue(response.has_header("X-End-Of-Life-Date"))
-        self.assertTrue(str(response["X-End-Of-Life-Date"]).startswith("2026-11-01"))
+        self.assertTrue(str(response["X-End-Of-Life-Date"]).startswith("2026-12-07"))
 
 
 @versioned_fixtures
@@ -2889,15 +2909,15 @@ class ToolConfigurationsTest(BaseClass.BaseClassTest):
         BaseClass.RESTEndpointTest.__init__(self, *args, **kwargs)
 
     def test_deprecation_notice_header(self):
-        # Deprecated in 3.2.0, removal planned for 3.5.0. The DeprecationNoticeMixin
-        # must run in finalize_response, which only happens if it precedes the base
-        # viewset in the MRO (see dojo/api_v2/views.py:DeprecationNoticeMixin).
+        # The DeprecationNoticeMixin must run in finalize_response, which only
+        # happens if it precedes the base viewset in the MRO (see
+        # dojo/api_v2/views.py:DeprecationNoticeMixin).
         response = self.client.get(self.url, format="json")
         self.assertEqual(200, response.status_code, response.content[:1000])
         self.assertTrue(response.has_header("X-Deprecated"))
         self.assertEqual("True", str(response["X-Deprecated"]))
         self.assertTrue(response.has_header("X-End-Of-Life-Date"))
-        self.assertTrue(str(response["X-End-Of-Life-Date"]).startswith("2026-11-01"))
+        self.assertTrue(str(response["X-End-Of-Life-Date"]).startswith("2026-12-07"))
 
 
 @versioned_fixtures
@@ -2946,13 +2966,12 @@ class ToolTypesTest(BaseClass.BaseClassTest):
         BaseClass.RESTEndpointTest.__init__(self, *args, **kwargs)
 
     def test_deprecation_notice_header(self):
-        # Deprecated in 3.2.0, removal planned for 3.5.0 (serves the API-based pull parsers).
         response = self.client.get(self.url, format="json")
         self.assertEqual(200, response.status_code, response.content[:1000])
         self.assertTrue(response.has_header("X-Deprecated"))
         self.assertEqual("True", str(response["X-Deprecated"]))
         self.assertTrue(response.has_header("X-End-Of-Life-Date"))
-        self.assertTrue(str(response["X-End-Of-Life-Date"]).startswith("2026-11-01"))
+        self.assertTrue(str(response["X-End-Of-Life-Date"]).startswith("2026-12-07"))
 
 
 @versioned_fixtures

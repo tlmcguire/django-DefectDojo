@@ -5,28 +5,26 @@ draft: false
 audience: pro
 weight: 5
 ---
-<span style="background-color:rgba(242, 86, 29, 0.3)">Note: Threat Modeling is a DefectDojo Pro-only feature and is currently in BETA.</span>
+<span style="background-color:rgba(242, 86, 29, 0.3)">Note: Threat Modeling is a DefectDojo Pro-only feature.</span>
 
 **Threat Modeling** turns a feature design into a reviewed threat model. You supply the design — pasted text, a design document, and optionally an architecture diagram — and DefectDojo produces the components and data flows it describes, the threats against them, and the security requirements that mitigate those threats. Requirements can then be pushed into DefectDojo as findings, so design-stage work flows through the same triage, SLA, Jira and reporting machinery as everything else.
 
 This is Sensei's **pre-code** capability. Where [scan-and-fix](/sensei/about_sensei/) works on a repository that already exists, threat modeling works on the design, before there is code to scan.
 
-> **🔎 BETA:** Threat Modeling is under active development and is labeled **BETA** throughout the UI. Behavior and screens may change between releases. It is on by default; a superuser can switch it off, or back on, from the [Feature Flags page](/admin/feature_flags/pro__feature_flags/) — no Support request is required.
-
-> **📍 Where to find it:** open **Threat Modeling** from the left-hand navigation, directly below Sensei.
+> **📍 Where to find it:** open **Sensei + AI > Threat Modeling** from the left-hand navigation, directly below Sensei.
 
 ## What you need
 
 - The **Sensei** licensed feature. Threat modeling ships under the same entitlement as scan-and-fix.
-- The **AI Threat Modeling** feature flag, which is on by default. If your instance turned it off, a superuser can turn it back on from the [Feature Flags page](/admin/feature_flags/pro__feature_flags/).
+- The **AI Threat Modeling** feature flag, which is on by default. If your instance turned it off, a superuser can turn it back on from the [Feature Flags page](/admin/feature_flags/pro__feature_flags/); no Support request is required.
 - A global **Maintainer** or **Owner** role. Users without it do not see the page.
-- An Asset to attach the threat model to. Instances using V3 naming see Assets called **assets**; this page says *Asset* throughout, and the UI follows whichever naming your instance is set to.
+- An Asset to attach the threat model to. Instances that have not enabled 3.0 naming see Assets called **products**; this page says *Asset* throughout, and the UI follows whichever naming your instance is set to.
 
 Nothing is installed and no repository is connected. Threat modeling reads only the design you supply.
 
 ## Generating a threat model
 
-Choose **New threat model**, pick the Asset, give it a name, and supply the design in whichever form you have it:
+Choose **New Threat Model**, pick the Asset, give it a name, and supply the design in whichever form you have it:
 
 - **Paste the description** directly, or
 - **Upload a design document** — `.md`, `.markdown`, `.txt`, `.text` or `.pdf`. Text extraction from PDF is best-effort; if a PDF is mostly images, paste the text instead.
@@ -36,10 +34,10 @@ You can combine them: a short pasted summary plus a diagram often produces a bet
 
 Generation runs in the background and moves through four stages, shown on the run as it progresses:
 
-1. **Extracting architecture** — components, trust boundaries, data assets and data flows.
-2. **Enumerating threats** — threats per STRIDE category.
-3. **Writing security requirements** — testable requirements, each tied to the threats it mitigates.
-4. **Assembling results** — the diagram and final consistency checks.
+1. **Extracting the Architecture** — components, trust boundaries, data assets and data flows.
+2. **Enumerating Threats** — threats per STRIDE category.
+3. **Writing Security Requirements** — testable requirements, each tied to the threats it mitigates.
+4. **Assembling Results** — the diagram and final consistency checks.
 
 A run typically takes several minutes. You can leave the page; progress and results are kept on the run.
 
@@ -55,7 +53,7 @@ The model also records what it could **not** determine — assumptions it had to
 
 Each threat carries:
 
-- Its **STRIDE category** (spoofing, tampering, repudiation, information disclosure, denial of service, elevation of privilege) and a **severity**.
+- Its **STRIDE Category** (spoofing, tampering, repudiation, information disclosure, denial of service, elevation of privilege) and a **severity**.
 - The **attacker profile** — for example an external unauthenticated attacker, an insider, or a supply-chain compromise — and the skill required.
 - An ordered **attack path**: the steps an attacker would take, with prerequisites.
 - A **CWE**, where one applies, drawn from a fixed list rather than invented.
@@ -107,6 +105,8 @@ A threat model can be downloaded as **Markdown** for a design review or ticket, 
 ## Generation activity
 
 The **Activity** tab lists every generation, its status and the stage it reached. Runs in progress can be **cancelled**. A failed run shows **why** it failed — a configuration problem, an input that was too long, or a temporary service error — and completed stages are checkpointed, so retrying resumes rather than starting from the beginning.
+
+A very large design can fail with a message that it is too large to extract in one answer. Retrying will not help, because the same design hits the same limit. Shorten the design, or split it into smaller parts (for example, one per subsystem) and generate a threat model for each.
 
 ## Costs
 

@@ -40,10 +40,12 @@ Each onboarded repository has a row-actions menu on the Sensei hub:
 
 ![Repository row actions](images/repo_row_menu.png)
 
-- **Scan now:** start an on-demand scan (opens the branch picker).
-- **Scan history:** view this repository's past scans.
+- **Scan Now:** start an on-demand scan (opens the branch picker).
+- **Scan History:** view this repository's past scans.
 - **Configure:** reopen the configuration form (PR reporting, automated fixes, Asset linkage).
-- **Re-stage candidates:** re-evaluate the repository's findings against the auto-fix criteria and stage fresh candidates.
+- **Re-stage Candidates:** re-evaluate the repository's findings against the auto-fix criteria and stage fresh candidates.
+- **Replace Access Token:** shown for a repository linked with a pasted access token, to users with Sensei edit permission. Enter a new token; Sensei checks that it reaches the repository before storing it.
+- **Remove Access Token:** shown for the same repositories, but only when the repository also has a source-control connection. Removes the pasted token, so jobs for the repository use that connection instead. A repository linked with **Enter Manually** and no connection keeps its token, because it is the only credential Sensei has for it; replace the token instead.
 - **Delete:** remove the repository from Sensei. This stops scanning it; it does not delete the underlying asset or findings.
 
 ## Quotas and metering
@@ -62,7 +64,7 @@ GitLab is supported alongside GitHub (gitlab.com and self-managed). The scan-and
 
 - **Connection:** a **project or group access token** (role **Developer**, or **Maintainer** if push rules require it) with the **`api`** and **`write_repository`** scopes, not a GitHub App. See [Set up Sensei](/sensei/setup_sensei/#connect-gitlab).
 - **Webhook:** each onboarded project needs a webhook to `…/sensei/gitlab/webhooks` (with the connection's secret) subscribed to **Push**, **Merge request**, and **Comment** events. Adding a webhook requires **Maintainer**/**Owner** on the project.
-- **Merge requests, not pull requests:** fixes open a **merge request** against the default branch; the `/fix` comment works on merge-request notes.
+- **Merge requests, not pull requests:** fixes open a **merge request** against the default branch; the `/fix` comment works on merge-request notes, from project members with **Developer** access or higher.
 - **Commit-status gate:** the PR status check is a GitLab **commit status** on the merge request's head commit: `running` while scanning, then `success` or `failed` (fail-on-new). GitLab has no *neutral* state, so a **non-gating** scan that still has findings shows a **green** status; the summary note carries the finding details.
 - **Self-managed:** point the **GitLab Base URL** at your instance; DefectDojo clones and calls the API against that host.
 
@@ -75,6 +77,7 @@ Bitbucket **Cloud** and **Server/Data Center** are supported. The scan-and-fix b
 - **Webhook:** each onboarded repository needs a webhook to `…/sensei/bitbucket/webhooks` (with the connection's secret, verified via HMAC-SHA256 `X-Hub-Signature`) subscribed to **Push**, **Pull request** (created/updated/merged/declined), and **Pull request comment** events.
 - **Build-status gate:** the PR status check is posted as a Bitbucket **build status** on the head commit (`INPROGRESS` → `SUCCESSFUL`/`FAILED`). Bitbucket has no *neutral* state, so a non-gating scan maps to `SUCCESSFUL` and the summary comment carries the detail. The build-status link must be a public URL, so it uses your DefectDojo host.
 - **Repository names:** `workspace/repo` (Cloud) or `PROJECTKEY/repo` (Server/Data Center).
+- **`/fix` comments:** DefectDojo runs a `/fix` only when the commenter has **write** access to the repository, so the connection must be able to read repository permissions (a workspace admin's OAuth or token on Cloud). If it cannot, `/fix` comments do nothing; the Fix button in DefectDojo still works.
 - **Server/Data Center:** set the **Base URL** to your host; DefectDojo uses the v1.0 REST API and `/scm/…` git paths.
 
 ## Azure DevOps specifics
@@ -86,6 +89,7 @@ Azure DevOps Repos are supported via a **Personal Access Token**. The scan-and-f
 - **Commit-status gate:** the PR status check is posted as a Git **commit status** on the head commit.
 - **Repository names:** `project/repo` (the organization is stored on the connection).
 - **Azure DevOps Server:** set the **Base URL** to your on-prem collection URL.
+- **No `/fix` comments:** Azure DevOps cannot tell DefectDojo whether a commenter can push to the repository, so `/fix` comments are not acted on. Use the Fix button in DefectDojo instead.
 
 ## GitHub Enterprise Server specifics
 
@@ -106,6 +110,7 @@ Cloud accounts are the CSPM analog of onboarded repositories; the full flow is o
 
 - **The Sensei button on a finding says "Configure Asset."** The finding's Asset isn't onboarded. Click it to onboard a repository for that Asset, then return to the finding.
 - **A fix shows "Failed" in Auto-fix Candidates or Scan Activity.** Open **Scan Activity** and check the **Root Cause** / **Details** for that run. Failed fixes remain listed so they don't disappear before producing a PR; you can re-stage and retry.
+- **A scan shows "Partial" next to its status in Scan Activity.** The scan finished, but at least one scanner it picked for the repository did not complete. Hover over the tag to see which ones. A scanner can be left out because its tool is not installed in the scan engine (on hosted scans, the PHP scanner Progpilot and the .NET scanner Security Code Scan), because it timed out or failed, or because the repository had nothing for it to analyze. The tag does not say which of these applied. The rest of the scan ran and its findings were imported. When only Progpilot or Security Code Scan is listed, Semgrep still covered the PHP and .NET code.
 - **A repository isn't listed when onboarding.** Only repositories the connection can access are shown. On **GitHub**, confirm the App is installed on the correct organization and its repository access includes the repository. On **GitLab**, confirm the access token's scope covers the project. On **Bitbucket Cloud**, confirm the **workspace** is set (tokens are workspace-scoped). On **Azure DevOps**, confirm the PAT's organization matches and its **Code** scope is granted.
 - **Scans or fixes never start after a webhook.** Confirm the repository's webhook points at the provider's receiver (`…/sensei/{gitlab,bitbucket,azure}/webhooks`, or `…/sensei/webhooks` for GitHub) with the correct secret/credentials, and subscribes to push + pull-request (+ comment) events. The provider's **recent deliveries** should show `HTTP 200`. Webhook-driven runs fire only for repositories onboarded in **hosted** mode; a push to a non-default branch is scanned via its pull request, not on its own.
 - **Nothing is happening after a scan.** Check that automated fixes are enabled (and your severity/risk thresholds match findings) on the repository's configuration, and that your **Fixes** quota isn't exhausted.
@@ -114,3 +119,13 @@ Cloud accounts are the CSPM analog of onboarded repositories; the full flow is o
 - **A fixed finding keeps reappearing in new scans.** Also expected while the fix is outstanding, and it does not cost you extra fixes: Sensei links each reappearance back to the original and will not stage a second candidate or open a second pull request for it.
 
 > **🔎 Still in BETA:** Sensei is evolving quickly. If behavior doesn't match this guide, check the [Pro changelog](/releases/pro/changelog/) for recent changes.
+
+## Scheduling repository scans
+
+Enable the Scheduling Service and Scan Cadence Assurance flags. The Scheduling Service requires a working orchestration deployment. Configure a hosted repository with scanning enabled, a default branch, and an associated product, then open its Schedule section. The default recurring schedule runs at 00:00 UTC every Monday. Recurring runs must start on the hour, at least six hours apart, with at most four selected hours per day. Single-run schedules remain available through the shared scheduling form.
+
+The repository appears in All Schedules with type Sensei. In-repo CI repositories show an unavailable state; configure their schedules in the CI provider.
+
+Saving or changing a schedule records the acting user. Each run rechecks that the user is active and can import scans into the product, and uses that user's DefectDojo API token. It does not use the worker's shared token or fall back to a superuser. Failed identity checks produce a failed operation with an explanation and a product alert. An authorized user must save the schedule again to change its identity. Automatic retries of an existing run retain the original user and recheck permissions.
+
+Scheduled scans use the repository's default branch. When a scan is queued or running for the same repository, the operation is marked skipped and no duplicate is submitted. Successful dispatch records the Sensei scan-run ID in the scheduling operation result. The imported Test is what changes [scan cadence status](../scan_cadence_policies/) at the next evaluation.

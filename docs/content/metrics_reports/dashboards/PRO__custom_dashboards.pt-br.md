@@ -31,7 +31,7 @@ Os Painéis Personalizáveis ficam desativados por padrão. Um superusuário pod
 
 Depois de ativado, a página **🏠 Home** exibe seu painel personalizável, e a [Dashboards REST API](../custom-dashboards-api/) fica disponível.
 
-> **🔑 Important:** Enquanto o recurso estiver desativado, a página inicial mantém o painel anterior e todo endpoint `/api/v2/dashboards/` retorna `403 Dashboard V2 is not enabled.` Ativar o recurso **não** altera o acesso de ninguém aos dados — cada widget continua respeitando o controle de acesso baseado em função do DefectDojo, portanto cada usuário só verá os Achados, Ativos e outros registros que estiver autorizado a visualizar.
+> **🔑 Important:** Enquanto o recurso estiver desativado, a página inicial mantém o painel anterior e todo endpoint `/api/v2/dashboards/` retorna `403 Dashboards 2.0 is not enabled.` Ativar o recurso **não** altera o acesso de ninguém aos dados — cada widget continua respeitando o controle de acesso baseado em função do DefectDojo, portanto cada usuário só verá os Achados, Ativos e outros registros que estiver autorizado a visualizar.
 
 ## Conceitos fundamentais
 
@@ -184,6 +184,7 @@ Listas classificadas, feeds e tabelas incorporadas.
 | **SLA Burndown** | Achados próximos de violar o SLA, classificados pelos dias restantes, com selos de contagem regressiva. |
 | **My Work** | Sua fila pessoal — atribuições, menções e revisões de aceitação de risco pendentes. Sempre limitada a quem está visualizando. |
 | **Saved Reports** | Acesso com um clique aos seus Modelos de Relatório salvos. *Requer o recurso de Relatórios.* |
+| **Top Root Causes** | Os clusters de causa raiz mais bem classificados, com a quantidade de Achados que cada um agrupa, os Assets afetados e sua prioridade e faixa de risco. *Requer o recurso Correlação de Causa Raiz.* |
 
 ### Static & Utility
 

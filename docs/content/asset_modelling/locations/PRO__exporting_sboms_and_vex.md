@@ -1,13 +1,13 @@
 ---
 title: "Exporting SBOMs and VEX"
-description: "Export an Asset's dependency inventory as CycloneDX or SPDX, and its finding statuses as a CycloneDX VEX document"
+description: "Export an Asset's dependency inventory as CycloneDX or SPDX, and its finding statuses as a CycloneDX or OpenVEX VEX document"
 audience: pro
 weight: 7
 ---
 
 DefectDojo Pro can serialize an Asset's current dependency inventory back out as a standards-compliant SBOM, and its vulnerability triage decisions as a machine-readable VEX document. Both are produced from the same [Dependency Locations](../pro__working_with_sboms/) that SBOM imports and scan findings populate, so whatever your scanners and uploads have accumulated is what the export describes — the documents are consumed by downstream tooling, compliance pipelines, and AI agents, not just humans.
 
-Both endpoints require **V3 Locations** to be enabled, and respect Asset-level permissions: an Asset the requesting user cannot view returns a 404.
+Both endpoints require **Locations** to be enabled, and respect Asset-level permissions: an Asset the requesting user cannot view returns a 404.
 
 ## Exporting from the Asset page
 
@@ -19,9 +19,38 @@ The Asset page carries an **Export** panel offering the same data without going 
 | **VEX** | The vulnerability analysis only — a standalone document describing the exploitability of this Asset's findings. |
 | **SBOM with vulnerabilities (VDR)** | Both — the inventory with an embedded `vulnerabilities` block carrying the VEX analysis. |
 
-Each choice names the format and specification version it produces, for example *SBOM — component inventory only (CycloneDX 1.6)*. Those labels are read from the server as the panel renders rather than written into the page, so they describe the document you will actually receive: when the exporters adopt a newer specification, the labels follow rather than going stale.
+A separate **Format** choice picks the specification, and lists only the formats the chosen type can produce:
 
-The Asset page and the API endpoints below emit the same specification version, so a document exported from either path is interchangeable with the other.
+| Export type | Formats |
+| --- | --- |
+| **SBOM** | CycloneDX, SPDX |
+| **VEX** | CycloneDX, OpenVEX |
+| **SBOM with vulnerabilities (VDR)** | CycloneDX |
+
+SPDX has no VEX profile, and OpenVEX has no form that embeds the analysis in an inventory, so VDR is CycloneDX only. Each format names its specification version, for example *CycloneDX 1.6* or *OpenVEX 0.2.0*. Those labels are read from the server as the panel renders rather than written into the page, so they describe the document you will actually receive: when the exporters adopt a newer specification, the labels follow rather than going stale.
+
+An OpenVEX export of an Asset with nothing to state fails with a message saying so, because an OpenVEX document must hold at least one statement.
+
+The Asset page and the API endpoints below emit the same specification version, but their VEX statements come from different data. The API's VEX reads the status of each Finding on each dependency (see [Exporting a VEX document](#exporting-a-vex-document)). The Asset page's VEX, and the vulnerabilities block of its VDR, read each Finding's own VEX analysis: the state, justification, response and detail set on the Finding.
+
+### How the Asset page builds VEX statements
+
+A Finding with no VEX analysis set gets a state from its status:
+
+| Finding status | VEX `analysis.state` |
+| --- | --- |
+| False Positive | `false_positive` |
+| Mitigated | `resolved` |
+| Risk Accepted | `exploitable`, with `response: ["will_not_fix"]` |
+| Anything else | `in_triage` |
+
+When every Finding for a vulnerability has the same state, the vulnerability is one entry listing every affected component. When they disagree (one host's Finding is marked not affected while another host's is still in triage), the export never lets the safer claim speak for the others:
+
+- Each component takes the least-resolved state among its Findings, in the order `exploitable`, `in_triage`, `resolved_with_pedigree`, `resolved`, `false_positive`, `not_affected`.
+- A Finding with no component is a statement about the whole Asset, so it takes the least-resolved state of all the vulnerability's Findings.
+- Components that end up in different states are listed in separate entries for the same vulnerability, each with the analysis of a Finding that holds that state.
+
+So two hosts with different states for one vulnerability in the same component never export as one `not_affected`.
 
 ## Exporting an SBOM
 
@@ -36,6 +65,15 @@ GET /api/v2/sbom/{asset_id}/?spec=spdx
 | `version` | An Asset version name, e.g. `5.2.0` | *(none — the current inventory)* |
 
 The response is a downloadable JSON document (`Content-Disposition: attachment`). Components carry their Package URL, group/namespace, version, artifact hashes (algorithms each specification supports), and — when the SBOM import recorded one — the license expression for this Asset's use of the component.
+
+Where a component records supplier and support facts, the export carries them too. CycloneDX
+writes the supplier as the component's `supplier` object, and the support facts as properties named
+`defectdojo:support_level` and `defectdojo:end_of_support_date`. SPDX writes the supplier as the
+package's supplier and the end of support date as `validUntilDate`.
+
+A component whose support level is unknown emits no support property at all. The document says
+nothing rather than saying unknown, because a consumer reading a property named support level
+should be reading a claim somebody made, not a placeholder.
 
 Without a `version`, the export describes the Asset's **current** inventory, and its `dependencies` section declares root → component edges only: the aggregate inventory is a set of libraries, not a graph.
 
@@ -59,9 +97,15 @@ A version the Asset does not have returns 404 rather than quietly exporting the 
 
 ```
 GET /api/v2/sbom/{asset_id}/vex/
+GET /api/v2/sbom/{asset_id}/vex/?spec=openvex
 ```
 
-The VEX export is a standalone CycloneDX 1.6 document built from the statuses of findings attached to the Asset's dependencies. Component references are Package URLs — the same identifiers the SBOM export uses — so the pair can be consumed together without any reference translation. SPDX has no VEX profile, so this endpoint is CycloneDX-only.
+| Parameter | Values | Default |
+| --- | --- | --- |
+| `spec` | `cyclonedx` (CycloneDX 1.6 JSON), `openvex` (OpenVEX 0.2.0 JSON) | `cyclonedx` |
+| `version` | An Asset version name, e.g. `5.2.0` | *(none: the current state)* |
+
+The VEX export is a standalone document built from the statuses of findings attached to the Asset's dependencies. Component references are Package URLs, the same identifiers the SBOM export uses, so the pair can be consumed together without any reference translation. SPDX has no VEX profile, so `spec=spdx` is refused with a 400; pair an SPDX SBOM with the OpenVEX export instead. See [OpenVEX](#openvex) for how the OpenVEX document is built.
 
 Statement grouping: one vulnerability entry per (vulnerability ID × analysis state), with every affected component listed under `affects`. Findings without a vulnerability ID are omitted — VEX statements are keyed by vulnerability identifier.
 
@@ -91,3 +135,24 @@ Two deliberate conservatisms:
 
 - A Finding mitigated on the Asset, but with no `fixed_in` record for the requested version, **keeps its status** for that version. Claiming a fix in a release requires evidence for that release.
 - Nothing is inferred across versions. A Finding found in 5.0 and fixed in 5.2 says nothing here about 5.1, because version strings carry no ordering (see [Asset Versions](../pro__working_with_sboms/#asset-versions-and-bom-snapshots)).
+
+## OpenVEX
+
+OpenVEX is the VEX format usually paired with SPDX. Both the API (`?spec=openvex`) and the Asset page build it by converting the CycloneDX VEX they would otherwise return, so the two formats always state the same analysis for the same Asset:
+
+| CycloneDX `analysis.state` | OpenVEX `status` | Also written |
+| --- | --- | --- |
+| `exploitable` | `affected` | `action_statement`: the planned response (for Risk Accepted, that no fix is planned), or that no remediation is recorded yet |
+| `in_triage` | `under_investigation` | |
+| `resolved`, `resolved_with_pedigree` | `fixed` | |
+| `not_affected`, `false_positive` | `not_affected` | `impact_statement`: the analysis detail, or why DefectDojo marked it |
+
+Through the API, that means Active and Risk Accepted are `affected`, Out of Scope and False Positive are `not_affected`, and Mitigated is `fixed`.
+
+- **Products.** Each statement's `products` are the components' Package URLs, the same identifiers the SBOM export uses. A statement about the whole Asset (a Finding with no component) names the Asset as `urn:defectdojo:product:<id>`.
+- **Justifications.** OpenVEX requires a justification or an impact statement on every `not_affected` statement. DefectDojo writes an impact statement. When a Finding carries a CycloneDX justification, the impact statement quotes it rather than translating it, since the two specifications define different justification lists.
+- **Severity.** OpenVEX states exploitability, not impact, so severity ratings are not carried over.
+- **Versions.** With `?version=`, every statement's `status_notes` names the version it describes, since OpenVEX has no document-level subject to hold it.
+- **Nothing to state.** An OpenVEX document must contain at least one statement, so an Asset with no findings to state returns a 400 rather than an invalid document.
+
+A document exported this way can be imported again with the [OpenVEX Scan parser](/supported_tools/parsers/file/openvex/), which reads the same Package URLs.

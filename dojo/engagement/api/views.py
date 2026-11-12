@@ -93,9 +93,15 @@ class EngagementViewSet(
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     def get_queryset(self):
+        # prefetch_related keeps EngagementSerializer from issuing a query per
+        # row: tags are serialized for every engagement (TagListSerializerField),
+        # and notes/risk_acceptance/files are serialized as nested objects.
+        # Without the "tags" prefetch the list view's query count grows with the
+        # number of engagements returned. TestsViewSet prefetches "tags" for the
+        # same reason.
         return (
             get_authorized_engagements("view")
-            .prefetch_related(notes_prefetch(), "risk_acceptance", "files")
+            .prefetch_related(notes_prefetch(), "risk_acceptance", "files", "tags")
             .distinct()
         )
 
@@ -209,6 +215,7 @@ class EngagementViewSet(
                     reverse("view_engagement", args=(engagement.id,)),
                 ),
                 parent_title=f"Engagement: {engagement.name}",
+                parent=engagement,
             )
 
             serialized_note = api_v2_serializers.NoteSerializer(
@@ -346,11 +353,14 @@ class EngagementViewSet(
     )
     def update_jira_epic(self, request, pk=None):
         engagement = self.get_object()
+        serializer = api_v2_serializers.EngagementUpdateJiraEpicSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        epic_kwargs = serializer.validated_data
         try:
             if engagement.has_jira_issue:
                 task = jira_services.get_epic_task("update_epic")
                 if task:
-                    dojo_dispatch_task(task, engagement.id, **request.data)
+                    dojo_dispatch_task(task, engagement.id, **epic_kwargs)
                 response = Response(
                     {"info": "Jira Epic update query sent"},
                     status=status.HTTP_200_OK,
@@ -358,7 +368,7 @@ class EngagementViewSet(
             else:
                 task = jira_services.get_epic_task("add_epic")
                 if task:
-                    dojo_dispatch_task(task, engagement.id, **request.data)
+                    dojo_dispatch_task(task, engagement.id, **epic_kwargs)
                 response = Response(
                     {"info": "Jira Epic create query sent"},
                     status=status.HTTP_200_OK,

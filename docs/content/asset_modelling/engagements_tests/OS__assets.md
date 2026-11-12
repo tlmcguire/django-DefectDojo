@@ -9,6 +9,8 @@ aliases:
 ---
 Organizations → **ASSETS** → Engagements → Tests → Findings
 
+An Asset is the thing whose security posture you want to track over time, such as an application, an API or a cloud environment. It holds every Engagement, Test and Finding for that thing, and its settings decide the SLA, permissions and deduplication scope those Findings use. To decide how broad each Asset should be, read [Asset Examples](#asset-examples) and [Asset Boundaries](#asset-boundaries). To add an Asset, see [Create Assets](#create-assets).
+
 ## Overview
 
 **Assets** sit at the center of how security work is organized within DefectDojo’s object hierarchy. Assets represent any project, program, software, or physical asset that your security team is testing, and host all of the security work and testing history related to the testing goal. Examples of Assets can include:
@@ -35,7 +37,51 @@ Assets can become even more granular depending on the needs of your organization
 - “ExampleAsset 1.0” uses completely different software components from “ExampleAsset 2.0”, and both versions are actively supported by your company.
 - The team assigned to work on “ExampleAsset version A” is different from the Asset team assigned to work on “ExampleAsset version B”, and needs to have different security permissions assigned as a result.
 
-While you may also elect to represent these variations as Engagements within a single Asset, RBAC can only be set at the level of Assets or Organizations, which may limit users’ access to the appropriate Engagement (as well as the Tests and Findings within those Engagements) if they’re organized as such. For more information on RBAC and permissions in DefectDojo, click [here](/admin/user_management/about_perms_and_roles/).
+While you may also elect to represent these variations as Engagements within a single Asset, access can only be granted at the level of Assets or Organizations, which may limit users’ access to the appropriate Engagement (as well as the Tests and Findings within those Engagements) if they’re organized as such. For more information, see [Open-Source Permissions](/admin/user_management/os__authorized_users/).
+
+## Asset Boundaries 
+
+### Deduplication 
+
+Assets are “walled-off” and do not interact with other Assets. DefectDojo’s Smart Features, such as Deduplication, only apply within the context of a single Asset. Findings across different Assets will not be automatically deduplicated.
+
+### Metrics 
+
+Most reporting and metrics aggregate data at the Asset level, making Assets the primary unit for measuring and tracking risk.
+
+As a result, many key metrics are calculated per Asset, including:
+
+- Total number of Findings (by severity or status)
+- Mean time to remediate (MTTR)
+- SLA compliance and breach rates
+- Risk trends over time
+
+This means that how Assets are structured will directly impact the accuracy and usefulness of reports. For example, grouping multiple unrelated systems under a single Asset may obscure risk visibility, while overly granular Asset structures can fragment reporting, making it difficult to identify broader trends.
+
+Asset-specific metrics can be accessed from the **Metrics** button in the top bar of the chosen Asset’s view. 
+
+![image](images/asset_ss8.png)
+
+### CI/CD Pipeline
+
+CI/CD pipelines automate the import of scan results. Regardless of the integration method, all scan imports must be associated with an Asset, making the Asset the anchor point for pipeline-driven security data.
+
+When a pipeline submits scan results, it must either:
+
+- Specify an existing Asset (and optionally an Engagement), or
+- Be configured in a way that consistently maps results to the correct Asset
+
+All imported Findings will inherit the Asset’s context, including ownership, permissions, SLA configuration, and reporting scope.
+
+In practice, Assets should be defined to reflect how systems are built and deployed within CI/CD to ensure that security results are consistently associated with the correct application or service.
+
+### Jira Relationships 
+
+Assets can be mapped directly to Jira Projects, which push the Asset’s Findings into a Jira instance.
+
+Because Findings inherit risk, priority, and ownership from their parent Asset, the Asset effectively determines the remediation context that flows into Jira tickets and Downstream Connector workflows.
+
+Importantly, Assets are also the primary determining factor in a Finding’s SLA characteristics. Therefore, the SLA of a Finding depends on the SLA configuration of its parent Asset. More information about SLA configurations can be found [here](/asset_modelling/os_hierarchy/os__sla_configuration/#main-content). 
 
 ## Asset Data 
 
@@ -49,7 +95,7 @@ Assets will always include the following components:
 Optional Asset metadata includes: 
 
 - **Tags**
-- **Personnel information** (e.g., Asset Manager, Team Manager, Technical Contact, etc.)
+- **Personnel information** (e.g., Asset Manager, Team Manager, Technical Contact, etc.). Only active users can be assigned to these fields, in the UI and over the API. If a user is deactivated later, the assignment stays in place as a historical reference and continues to be readable, but that user cannot be assigned again until the account is reactivated. An update that re-sends the value already stored is still accepted.
 - **Regulations** (e.g., HIPAA, GLBA, OPPA, etc.)
 - **Business criticality**
 - **Platform** (e.g., API, Desktop, IoT, Mobile, Web, etc.)
@@ -68,11 +114,11 @@ Assets are accessible via the sidebar. The submenu also provides the option to c
 
 ### Permissions 
 
-Assets can have Role-Based Access Control (RBAC) rules applied, which limit team members’ ability to view and interact with them.
+Access to an Asset is granted through its [Authorized Users](/admin/user_management/os__authorized_users/) list, which limits who can view and interact with it.
 
 Permissions cascade downward, meaning that access to an Asset automatically grants access to all objects within that Asset (e.g., Engagements, Tests, and Findings).
 
-For more information on user roles, see our [Introduction To Roles article](/admin/user_management/about_perms_and_roles/).
+For more information on access, see [Open-Source Permissions](/admin/user_management/os__authorized_users/).
 
 ## Asset View 
 
@@ -134,47 +180,3 @@ Deleting an Asset will also delete the following:
 - All associated security history, including Findings and integrations
 - Any linked Jira Epics
 - All notes and file uploads associated with the Asset’s Engagements and Tests
-
-## Asset Boundaries 
-
-### Deduplication 
-
-Assets are “walled-off” and do not interact with other Assets. DefectDojo’s Smart Features, such as Deduplication, only apply within the context of a single Asset. Findings across different Assets will not be automatically deduplicated.
-
-### Metrics 
-
-Most reporting and metrics aggregate data at the Asset level, making Assets the primary unit for measuring and tracking risk.
-
-As a result, many key metrics are calculated per Asset, including:
-
-- Total number of Findings (by severity or status)
-- Mean time to remediate (MTTR)
-- SLA compliance and breach rates
-- Risk trends over time
-
-This means that how Assets are structured will directly impact the accuracy and usefulness of reports. For example, grouping multiple unrelated systems under a single Asset may obscure risk visibility, while overly granular Asset structures can fragment reporting, making it difficult to identify broader trends.
-
-Asset-specific metrics can be accessed from the **Metrics** button in the top bar of the chosen Asset’s view. 
-
-![image](images/asset_ss8.png)
-
-### CI/CD Pipeline
-
-CI/CD pipelines automate the import of scan results. Regardless of the integration method, all scan imports must be associated with an Asset, making the Asset the anchor point for pipeline-driven security data.
-
-When a pipeline submits scan results, it must either:
-
-- Specify an existing Asset (and optionally an Engagement), or
-- Be configured in a way that consistently maps results to the correct Asset
-
-All imported Findings will inherit the Asset’s context, including ownership, permissions, SLA configuration, and reporting scope.
-
-In practice, Assets should be defined to reflect how systems are built and deployed within CI/CD to ensure that security results are consistently associated with the correct application or service.
-
-### Jira Relationships 
-
-Assets can be mapped directly to Jira Projects, which push the Asset’s Findings into a Jira instance.
-
-Because Findings inherit risk, priority, and ownership from their parent Asset, the Asset effectively determines the remediation context that flows into Jira tickets and Downstream Connector workflows.
-
-Importantly, Assets are also the primary determining factor in a Finding’s SLA characteristics. Therefore, the SLA of a Findings depends on the SLA configuration of its parent Asset. More information about SLA configurations can be found [here](/asset_modelling/os_hierarchy/os__sla_configuration/#main-content). 

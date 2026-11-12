@@ -21,12 +21,12 @@ const _chartInstances = {};
    Severity colour palette (updated to match Tailwind design tokens)
    ────────────────────────────────────────────────────────────────── */
 const SEV = {
-    critical: '#dc2626',   // red-600
-    high:     '#ea580c',   // orange-600
-    medium:   '#ca8a04',   // yellow-600
-    low:      '#2563eb',   // blue-600
-    info:     '#6b7280',   // gray-500
-    green:    '#16a34a',   // green-600  (used in burndown low)
+    critical: '#e5484d',   // severity-critical
+    high:     '#f97316',   // severity-high
+    medium:   '#eab308',   // severity-medium
+    low:      '#5a83c9',   // severity-low
+    info:     '#6b7280',   // severity-info
+    green:    '#62a744',   // brand Success Green (used in burndown low)
     accepted: '#7c3aed',   // violet-600 (accepted / info alternate)
 };
 
@@ -84,13 +84,6 @@ function _toTimePoints(data) {
 /** Extract just the y-values from [[idx, val], …] */
 function _vals(data) {
     return (data || []).map(function (d) { return d[1]; });
-}
-function _sevVals(data, labels) {
-    var out = labels.map(function () { return 0; });
-    (data || []).forEach(function (d) {
-        if (d[0] >= 0 && d[0] < out.length) out[d[0]] = d[1];
-    });
-    return out;
 }
 
 /** Place Flot-style [[x, val], …] points into the category slots named by `ticks`.
@@ -188,13 +181,13 @@ function _sevTimeLine(id, datasets, opts) {
                         unit: opts.timeUnit,
                     },
                     ticks: { maxTicksLimit: opts.maxTicks },
-                    grid: { color: '#e5e7eb' },
+                    grid: { color: '#ecdecc' },
                 },
                 y: {
                     beginAtZero: true,
                     min: opts.yMin,
                     max: opts.yMax,
-                    grid: { color: '#e5e7eb' },
+                    grid: { color: '#ecdecc' },
                 },
             },
         },
@@ -220,12 +213,12 @@ function _sevTickLine(id, datasets, labels, opts) {
             },
             scales: {
                 x: {
-                    grid: { color: '#e5e7eb' },
+                    grid: { color: '#ecdecc' },
                     ticks: { maxRotation: 45, autoSkip: true },
                 },
                 y: {
                     beginAtZero: true,
-                    grid: { color: '#e5e7eb' },
+                    grid: { color: '#ecdecc' },
                 },
             },
         },
@@ -257,13 +250,16 @@ function _sevStackedBar(id, d1, d2, d3, d4, d5, ticks, opts) {
                     display: opts.showLegend === true,
                     position: 'top',
                     labels: { usePointStyle: true, boxWidth: 8 },
-datasets: [
-    { label: 'Critical', data: _sevVals(d1, labels), backgroundColor: SEV.critical },
-    { label: 'High',     data: _sevVals(d2, labels), backgroundColor: SEV.high },
-    { label: 'Medium',   data: _sevVals(d3, labels), backgroundColor: SEV.medium },
-    { label: 'Low',      data: _sevVals(d4, labels), backgroundColor: SEV.low },
-    { label: 'Info',     data: _sevVals(d5, labels), backgroundColor: SEV.info },
-],                },            },            scales                x: { stacked: true, grid: { display: false }, ticks: { maxRotation: 45, autoSkip: true } }                y: { stacked: true, beginAtZero: true, grid: { color: '#e5e7eb' } }            }        }, 
+                },
+            },
+            scales: {
+                x: { stacked: true, grid: { display: false }, ticks: { maxRotation: 45, autoSkip: true } },
+                y: { stacked: true, beginAtZero: true, grid: { color: '#ecdecc' } },
+            },
+        },
+    });
+}
+
 /** Pie / doughnut chart. items = [{label, value, color}, …] */
 function _pie(id, items, opts) {
     opts = opts || {};
@@ -322,7 +318,7 @@ function _categoryBar(id, data, opts) {
             },
             scales: {
                 x: { grid: { display: false }, ticks: { maxRotation: 45, autoSkip: true } },
-                y: { beginAtZero: true, grid: { color: '#e5e7eb' } },
+                y: { beginAtZero: true, grid: { color: '#ecdecc' } },
             },
         },
     });
@@ -729,7 +725,7 @@ function finding_age(data_1, ticks) {
                 y: {
                     title: { display: true, text: 'Number of Findings' },
                     beginAtZero: true,
-                    grid: { color: '#e5e7eb' },
+                    grid: { color: '#ecdecc' },
                 },
             },
         },
@@ -779,8 +775,8 @@ function punchcard(element, data, ticks) {
         data: {
             datasets: [{
                 data: bubbleData,
-                backgroundColor: 'rgba(99, 102, 241, 0.5)',
-                borderColor: 'rgb(99, 102, 241)',
+                backgroundColor: 'rgba(0, 95, 115, 0.5)',
+                borderColor: 'rgb(0, 95, 115)',
                 borderWidth: 1,
             }],
         },
@@ -807,7 +803,7 @@ function punchcard(element, data, ticks) {
                         },
                         maxRotation: 45,
                     },
-                    grid: { color: '#e5e7eb' },
+                    grid: { color: '#ecdecc' },
                 },
                 y: {
                     min: -0.5,
@@ -818,7 +814,7 @@ function punchcard(element, data, ticks) {
                         },
                         stepSize: 1,
                     },
-                    grid: { color: '#e5e7eb' },
+                    grid: { color: '#ecdecc' },
                 },
             },
         },
@@ -866,12 +862,12 @@ function JustGage(opts) {
             ctx.textBaseline = 'middle';
             // Value
             ctx.font = 'bold 1.5rem Inter, system-ui, sans-serif';
-            ctx.fillStyle = '#1f2937';
+            ctx.fillStyle = '#003038';
             ctx.fillText(value, w / 2, h / 2 - 8);
             // Label
             if (label) {
                 ctx.font = '0.75rem Inter, system-ui, sans-serif';
-                ctx.fillStyle = '#6b7280';
+                ctx.fillStyle = '#55666a';
                 ctx.fillText(label, w / 2, h / 2 + 14);
             }
             ctx.restore();
@@ -884,7 +880,7 @@ function JustGage(opts) {
             labels: [title, ''],
             datasets: [{
                 data: [pct, remaining],
-                backgroundColor: [color, '#e5e7eb'],
+                backgroundColor: [color, '#ecdecc'],
                 borderWidth: 0,
             }],
         },

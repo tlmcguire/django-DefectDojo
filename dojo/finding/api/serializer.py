@@ -430,6 +430,8 @@ class FindingSerializer(serializers.ModelSerializer):
             "cve",
             "inherited_tags",
         )
+        # The related model is superuser-only; only the SonarQube importer assigns it.
+        read_only_fields = ("sonarqube_issue",)
 
     def get_fields(self):
         from dojo.api_v2.serializers import (  # noqa: PLC0415 -- lazy import, avoids circular dependency
@@ -451,6 +453,10 @@ class FindingSerializer(serializers.ModelSerializer):
         # an empty queryset instead of raising on the AnonymousUser instance.
         if user is not None and not user.is_authenticated:
             user = None
+        # A subclass may have dropped the field (e.g. a response-fields filter); adding it back would
+        # serialize, and query, a relation the response does not ask for.
+        if "endpoints" not in self.fields:
+            return
         if not locations_enabled():
             self.fields["endpoints"] = serializers.PrimaryKeyRelatedField(
                 many=True, required=False,
@@ -702,6 +708,8 @@ class FindingCreateSerializer(serializers.ModelSerializer):
             "cve",
             "inherited_tags",
         )
+        # The related model is superuser-only; only the SonarQube importer assigns it.
+        read_only_fields = ("sonarqube_issue",)
         extra_kwargs = {
             "active": {"required": True},
             "verified": {"required": True},

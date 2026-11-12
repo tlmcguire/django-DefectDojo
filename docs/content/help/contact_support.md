@@ -13,7 +13,7 @@ Need help with DefectDojo? Here are some ways to get assistance.
 
 Open-Source users can receive help and advice through our community channels.
 
-For Open-Source users, the quickest way to get help is through the [OWASP Slack Channel](https://owasp.org/slack/invite).  Our community members are active on the **# defectdojo channel** and can help you with issues you're facing.
+For Open-Source users, the quickest way to get help is through the [DefectDojo Community Slack](https://defectdojocommunity.slack.com/join/shared_invite/zt-3l9028wlf-ezDB29D_MIh9ShXdesCHZA#/shared-invite/email).  Our community members and maintainers are active in the **#02-help** channel and can help you with issues you're facing.
 
 To report a bug, issues can be raised on our [GitHub](https://github.com/DefectDojo/django-DefectDojo).
 
@@ -21,26 +21,22 @@ See our [Community Site](https://defectdojo.com/open-source) for more informatio
 
 ## DefectDojo Pro Support
 
-DefectDojo Pro subscriptions come with full support from the DefectDojo, Inc. team during the initial trial period and beyond.
+DefectDojo Pro subscriptions come with full support from the DefectDojo, Inc. team from the first day of your subscription.
 
 ### Email
 
 Customers/Pro Users can always email our team directly at [support@defectdojo.com](mailto:support@defectdojo.com) for assistance.
 
+For self-hosted deployments, [Releases and Support Lifecycle](/get_started/pro/onprem/support_lifecycle/) explains which release is supported, where to send scan results for DefectDojo images, and how to report a vulnerability in DefectDojo itself.
+
 ### Within DefectDojo
 
-You can contact the Support team through the DefectDojo App in two ways:
+Open **Settings > Support** from the left sidebar. In the reorganized settings menu, open **Settings > License & Support > Support**. You can also go to **{your-instance}/ui/cloud/support**.
 
-1. by opening **Cloud Manager > Contact Support** from the left sidebar
-2. through **{your-instance}.defectdojo.com/cloud_portal/support**.
-
-![image](images/contact_defectdojo_support.png)
+On the Support page you can file a request, follow its status, and vote on community requests. On an airgapped instance, the page shows the support e-mail address instead. See [Support](/navigation/pro__support/) for details.
 
 ### Through the Cloud Portal
 
-You can also contact our support team through your Cloud Portal:
-
-1. by clicking on **Contact Us** (on the left sidebar)
-2. or via **<https://cloud.defectdojo.com/resources/contact>**.
+You can also contact our support team from the Cloud Manager at <https://cloud.defectdojo.com>. Select **Contact support** in the left sidebar, choose the subscription your request is about, add a subject and a message, and select **Send**.
 
 ![image](images/contact_defectdojo_support_2.png)
