@@ -8,6 +8,30 @@ The feature implements DefectDojo issue [#13592](https://github.com/DefectDojo/d
 
 The acceptance criteria were: valid restricted formats; opt-in without backfill; product-local, non-reused numbers; distinct numbers under concurrent creation; rollback after failed creation; consistent behavior through UI, both APIs, imports, copy and Product moves; read-only issued numbers and counters. Automated model and API tests cover those behaviors, with a direct Postgres concurrency check for simultaneous creation. A browser check created an Asset with `ENG-{number:04d}` and two Engagements; the Asset's Engagement table and detail pages displayed `ENG-0001` and `ENG-0002`. The earlier issue discussion rejected a global primary-key-based counter because it advanced across unrelated products.
 
+## What an Engagement represents
+
+DefectDojo organizes security work as **Organization → Asset → Engagement → Test → Finding**. An Engagement is a time- or pipeline-bound testing effort for one Asset. A penetration test, quarterly scan, bug bounty review period, release security review, or CI/CD pipeline run can each have its own Engagement. It records the scope, dates, status, lead, and related Tests; those Tests hold the findings. The [project's Engagement guide](https://github.com/tlmcguire/django-DefectDojo/blob/coursework/final-project-engagement-numbering/docs/content/asset_modelling/engagements_tests/OS__engagements.md) describes this hierarchy and the Interactive and CI/CD types.
+
+Engagements matter because they keep results tied to the testing effort that produced them. Teams can distinguish a current scan from an earlier assessment, assign a lead, track progress, and review findings in the context of an Asset and time period. Recurring tests and imports can be organized without mixing every result into one undifferentiated history.
+
+A readable reference helps people identify an Engagement in a report, ticket, meeting, or API response. Names can be long or similar across repeated assessments, while a database ID is global and may jump between unrelated Assets. Product-local numbering gives each Asset a recognizable sequence such as `ENG-0001`, `ENG-0002`. The number is a human-facing reference; the database ID and URL remain the technical identity. Moving an Engagement to another Asset gives it a new reference from the destination Asset's sequence.
+
+## Before and after
+
+These screenshots show two **local demo Assets in the implemented application**. “Before” means an Asset with no number format configured; it is not a screenshot of an older DefectDojo release. “After” means an Asset configured with `ENG-{number:04d}`. This comparison shows the opt-in behavior without claiming that existing Engagements are backfilled.
+
+### Before: no format configured
+
+The Engagement list shows **Baseline engagement** by name with no reference prefix.
+
+![Before numbering: a local Asset with an unnumbered Baseline engagement](https://raw.githubusercontent.com/wiki/tlmcguire/django-DefectDojo/images/engagement-numbering-before.jpg)
+
+### After: format configured
+
+The Engagement list shows two new Engagements with distinct, Asset-local references: `ENG-0001` and `ENG-0002`.
+
+![After numbering: a local Asset whose Engagement list shows ENG-0001 and ENG-0002](https://raw.githubusercontent.com/wiki/tlmcguire/django-DefectDojo/images/engagement-numbering-after.jpg)
+
 ## Project rules that shaped the work
 
 - [AGENTS.md](https://github.com/tlmcguire/django-DefectDojo/blob/coursework/final-project-engagement-numbering/AGENTS.md) states, “Base every change on `dev`,” and “The PR base branch is `dev`.” The feature branch contains `origin/dev`; the coursework branch builds on that feature commit.
