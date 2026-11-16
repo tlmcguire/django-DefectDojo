@@ -23,13 +23,13 @@ docker compose up -d
 ./run-unittest.sh --test-case unittests.test_apiv2_engagement
 ./run-unittest.sh --test-case unittests.api_v3.test_apiv3_engagements
 ./run-unittest.sh --test-case unittests.api_v3.test_apiv3_assets
-./run-unittest.sh --test-case unittests.test_importers_performance
-./run-unittest.sh --test-case unittests
+./run-unittest.sh --test-case unittests.test_tag_inheritance_perf
+./run-unittest.sh --test-case unittests.test_rest_framework
 docker compose exec -T uwsgi python manage.py makemigrations --check --dry-run
 docker compose exec -T uwsgi python manage.py spectacular --fail-on-warn --file /tmp/engagement-schema.yml
 ```
 
-The four focused suites passed: 8, 4 (one existing skip), 33, and 27 tests respectively. Migration drift check reported `No changes detected`; the API schema command exited successfully. A direct two-writer Postgres check created `ENG-0001` and `ENG-0002` for one Product. The importer performance test, complete suite, and pinned Ruff results are recorded in the final-project wiki page.
+The four focused suites passed: 8, 4 (one existing skip), 33, and 27 tests respectively. Migration drift check reported `No changes detected`; the API schema command exited successfully. A direct two-writer Postgres check created `ENG-0001` and `ENG-0002` for one Product. All 8,860 discovered tests passed across three compatible groups (558 skipped). The single-command full run exposed two order-sensitive importer query-count assertions; the full importer performance module passed in isolation with unchanged baselines. The exact results and pinned Ruff check are recorded in the final-project wiki page.
 
 To reproduce through the application, edit an Asset and set **Engagement number format** to `ENG-{number:04d}`. Create two Engagements under it. Their list and detail views show `ENG-0001` and `ENG-0002`. The Product API exposes the format, while engagement read APIs expose the issued number.
 

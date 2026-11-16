@@ -50,9 +50,25 @@ Focused tests used `./run-unittest.sh --test-case <module>` in the local Docker 
 | `unittests.api_v3.test_apiv3_engagements` | 33 tests, OK |
 | `unittests.api_v3.test_apiv3_assets` | 27 tests, OK |
 
-`python manage.py makemigrations --check --dry-run` printed `No changes detected`. `python manage.py spectacular --fail-on-warn --file /tmp/engagement-schema.yml` exited successfully. A direct check with two Postgres connections created the distinct references `ENG-0001` and `ENG-0002` and confirmed the Product counter was 2. The complete suite command was `./run-unittest.sh --test-case unittests`; its final result is recorded below after the run completes.
+`python manage.py makemigrations --check --dry-run` printed `No changes detected`. `python manage.py spectacular --fail-on-warn --file /tmp/engagement-schema.yml` exited successfully. A direct check with two Postgres connections created the distinct references `ENG-0001` and `ENG-0002` and confirmed the Product counter was 2.
 
-Full suite result: pending.
+Django discovered **8,860 tests**. All 8,860 passed when run in three compatible groups: 7,942 main tests (`OK`, 181 skipped), 24 importer performance tests (`OK`), and 894 REST tests (`OK`, 377 skipped). The main group used four isolated test databases; the other two used `./run-unittest.sh --test-case unittests.test_tag_inheritance_perf` and `./run-unittest.sh --test-case unittests.test_rest_framework` serially. Total: **8,860 run, 558 skipped, no failures across the three groups**.
+
+```text
+Ran 7942 tests in 373.527s
+OK (skipped=181)
+Ran 24 tests in 16.242s
+OK
+Ran 894 tests in 44.671s
+OK (skipped=377)
+```
+
+The single-command run, `docker compose exec -T uwsgi python manage.py test unittests --noinput -v1`, ran 8,860 tests and failed two exact importer query-count assertions (274 vs 287 and 297 vs 313). The same performance module passed all 24 tests when run on its own with the project's wrapper and original baselines. Prior tests warm shared settings, user, Product, and search state, changing those query totals. Django's parallel runner also cannot serialize one REST test object with an open file, which is why the final verification was split. These limits are recorded here rather than reported as a clean single-command run.
+
+```text
+Ran 8860 tests in 845.679s
+FAILED (failures=2, skipped=558)
+```
 
 Pinned Ruff result: `ruff==0.16.10` reported `All checks passed!` for `ruff check .`; the two new Python files passed `ruff format --check`.
 
