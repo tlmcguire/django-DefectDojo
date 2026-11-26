@@ -123,11 +123,13 @@ class RiskAcceptanceSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.CharField())
     def get_path(self, obj):
-        engagement = Engagement.objects.filter(
-            risk_acceptance__id__in=[obj.id],
-        ).first()
         path = "No proof has been supplied"
-        if engagement and obj.filename() is not None:
+        if obj.filename() is None:
+            return path
+        # Read through the relation, so a prefetched engagement_set serves it with no query. Same row as
+        # Engagement.objects.filter(risk_acceptance=obj).first(): Engagement's manager orders by id, prefetched or not.
+        engagement = next(iter(obj.engagement_set.all()), None)
+        if engagement:
             path = reverse(
                 "download_risk_acceptance", args=(engagement.id, obj.id),
             )
@@ -155,7 +157,12 @@ class RiskAcceptanceSerializer(serializers.ModelSerializer):
                 msg = "You are not permitted to add findings from multiple engagements"
                 raise PermissionDenied(msg)
 
-        findings = data.get("accepted_findings", [])
+        # Each finding once, in the order first named: a repeated id is the same finding, and left
+        # in it makes the list longer than the authorized rows counted below, which read as a
+        # finding the caller may not see.
+        findings = list(dict.fromkeys(data.get("accepted_findings", [])))
+        if "accepted_findings" in data:
+            data["accepted_findings"] = findings
         findings_ids = [x.id for x in findings]
         finding_objects = Finding.objects.filter(id__in=findings_ids)
         authed_findings = get_authorized_findings("edit").filter(id__in=findings_ids)
