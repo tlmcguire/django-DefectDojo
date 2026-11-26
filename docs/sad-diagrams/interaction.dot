@@ -1,0 +1,11 @@
+digraph interaction {
+graph [bgcolor="white", pad="0.18", ranksep="0.33", nodesep="0.22", fontname="Helvetica", fontcolor="#143043"]; node [shape=box, style="rounded,filled", fillcolor="#EEF4F8", color="#7596A8", fontname="Helvetica", fontcolor="#143043", fontsize=12, margin="0.14,0.09"]; edge [color="#5C7687", fontname="Helvetica", fontcolor="#29465A", fontsize=9, arrowsize=0.72];
+rankdir=TB;
+a [label="1  UI, API or importer\nValidate or resolve creation context"];
+b [label="2  Engagement to BaseModel\nEnter save transaction",fillcolor="#D6F3ED"];
+c [label="3  Engagement to PostgreSQL\nLock destination Product and read its format and counter"];
+d [label="4  Engagement to formatter and PostgreSQL\nRender reference and update Product counter",fillcolor="#D6F3ED"];
+e [label="5  BaseModel to PostgreSQL\nInsert Engagement and commit"];
+f [label="6  Django to caller\nReturn or display issued reference"];
+a -> b -> c -> d -> e -> f;
+}

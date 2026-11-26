@@ -1,0 +1,5 @@
+digraph activity {
+graph [bgcolor="white", pad="0.18", ranksep="0.33", nodesep="0.22", fontname="Helvetica", fontcolor="#143043"]; node [shape=box, style="rounded,filled", fillcolor="#EEF4F8", color="#7596A8", fontname="Helvetica", fontcolor="#143043", fontsize=12, margin="0.14,0.09"]; edge [color="#5C7687", fontname="Helvetica", fontcolor="#29465A", fontsize=9, arrowsize=0.72];
+start [label="Save Engagement"]; decide [shape=diamond,label="New or Product changed?"]; lock [label="Lock destination Product"]; opt [shape=diamond,label="Format configured?"]; skip [label="Keep current reference"]; num [label="Render next reference\nand increment counter",fillcolor="#D6F3ED"]; blank [label="Set reference to null"]; save [label="Persist Engagement"]; result [shape=diamond,label="Write succeeds?"]; commit [label="Commit"]; undo [label="Roll back"];
+start -> decide; decide -> skip [label="No"]; decide -> lock [label="Yes"]; lock -> opt; opt -> num [label="Yes"]; opt -> blank [label="No"]; {skip num blank} -> save; save -> result; result -> commit [label="Yes"]; result -> undo [label="No"];
+}

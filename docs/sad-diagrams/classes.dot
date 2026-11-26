@@ -1,0 +1,10 @@
+digraph classes {
+graph [bgcolor="white", pad="0.18", ranksep="0.33", nodesep="0.22", fontname="Helvetica", fontcolor="#143043"]; node [shape=box, style="rounded,filled", fillcolor="#EEF4F8", color="#7596A8", fontname="Helvetica", fontcolor="#143043", fontsize=12, margin="0.14,0.09"]; edge [color="#5C7687", fontname="Helvetica", fontcolor="#29465A", fontsize=9, arrowsize=0.72];
+rankdir=TB;
+base [label="BaseModel\nSave transaction and pre-save hook"];
+eng [label="Engagement\nproduct_id, engagement_number\nfrom_db(), save(), pre_save_logic()",fillcolor="#D6F3ED"];
+prod [label="Product\nengagement_number_format\nengagement_number_counter",fillcolor="#D6F3ED"];
+fmt [label="dojo.product.numbering\nvalidate_engagement_number_format()\nformat_engagement_number()"];
+db [label="PostgreSQL unique constraint\n(product, engagement_number)"];
+{rank=same; eng prod} eng -> base [label="inherits"]; prod -> base [label="inherits"]; eng -> prod [label="locks destination"]; eng -> fmt [label="renders"]; prod -> fmt [label="validates"]; eng -> db [label="persists"];
+}

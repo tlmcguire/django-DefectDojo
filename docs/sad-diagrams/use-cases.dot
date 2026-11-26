@@ -1,0 +1,7 @@
+digraph use_cases {
+graph [bgcolor="white", pad="0.18", ranksep="0.33", nodesep="0.22", fontname="Helvetica", fontcolor="#143043"]; node [shape=box, style="rounded,filled", fillcolor="#EEF4F8", color="#7596A8", fontname="Helvetica", fontcolor="#143043", fontsize=12, margin="0.14,0.09"]; edge [color="#5C7687", fontname="Helvetica", fontcolor="#29465A", fontsize=9, arrowsize=0.72];
+rankdir=LR;
+owner [label="Product owner"]; analyst [label="Security analyst"]; ci [label="CI integration"]; risk [label="Risk decision maker"];
+subgraph cluster_dojo { label="DefectDojo"; import [label="UC1 Import scan results"]; triage [label="UC2 Triage a Finding"]; accept [label="UC3 Accept Finding risk"]; configure [label="UC4 Configure numbering",fillcolor="#D6F3ED"]; create [label="UC5 Create or transfer Engagement",fillcolor="#D6F3ED"]; }
+owner -> configure; analyst -> { import triage create }; ci -> { import create }; risk -> accept; import -> create [style=dashed,label=" can create "];
+}

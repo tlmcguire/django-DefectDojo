@@ -1,0 +1,6 @@
+digraph domain {
+graph [bgcolor="white", pad="0.18", ranksep="0.33", nodesep="0.22", fontname="Helvetica", fontcolor="#143043"]; node [shape=box, style="rounded,filled", fillcolor="#EEF4F8", color="#7596A8", fontname="Helvetica", fontcolor="#143043", fontsize=12, margin="0.14,0.09"]; edge [color="#5C7687", fontname="Helvetica", fontcolor="#29465A", fontsize=9, arrowsize=0.72];
+rankdir=LR;
+pt [label="Product_Type\nOrganization"]; prod [label="Product\nAsset",fillcolor="#D6F3ED"]; eng [label="Engagement\nOptional local reference",fillcolor="#D6F3ED"]; test [label="Test"]; finding [label="Finding"]; risk [label="Risk_Acceptance"];
+pt -> prod [label="1 to many"]; prod -> eng [label="1 to many"]; eng -> test [label="1 to many"]; test -> finding [label="1 to many"]; risk -> finding [label="many to many",constraint=false];
+}

@@ -1,0 +1,11 @@
+digraph architecture {
+graph [bgcolor="white", pad="0.18", ranksep="0.33", nodesep="0.22", fontname="Helvetica", fontcolor="#143043"]; node [shape=box, style="rounded,filled", fillcolor="#EEF4F8", color="#7596A8", fontname="Helvetica", fontcolor="#143043", fontsize=12, margin="0.14,0.09"]; proxy [color="#5C7687", fontname="Helvetica", fontcolor="#29465A", fontsize=9, arrowsize=0.72];
+rankdir=TB;
+browser [label="Browser"]; api [label="Scan and API clients"]; proxy [label="Nginx to uWSGI"];
+subgraph cluster_django { label="Django dojo application";
+adapter [label="UI forms and views\nAPI v2 / API v3 alpha"]; importer [label="Importers and parser factory"];
+dom [label="Product and Engagement\nFormat validation and atomic numbering",fillcolor="#D6F3ED"]; controls [label="Permissions, settings and locale catalogs"];
+adapter -> { controls importer dom }; importer -> dom; }
+db [label="PostgreSQL\nModels and audit tables"]; valkey [label="Valkey\nBroker and cache"]; worker [label="Celery workers"];
+{rank=same; db valkey worker} { browser api } -> proxy; proxy -> adapter; dom -> db; adapter -> valkey; valkey -> worker; worker -> db [constraint=false];
+}
